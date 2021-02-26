@@ -3,7 +3,7 @@ module PriorityQueue
 
 import Base:
     ∈, length, minimum, 
-    push!, take!, insert!
+    sizehint!, push!, take!, insert!
 
 export RankedQueue
 export update!
@@ -17,7 +17,12 @@ struct RankedQueue{T <: Real, S <: Any}
     data :: Array{S, 1}
 end
 
-ϵ(q::RankedQueue{T,S}, x::S) where {T <: Real, S <: Any} = x ∈ q.data
+∈(x::S, q::RankedQueue{T,S}) where {T <: Real, S <: Any} = x ∈ q.data
+
+function sizehint!(q::RankedQueue, n)
+    sizehint!(q.rank, n)
+    sizehint!(q.data, n)
+end
 
 function rotateup!(q::RankedQueue, i)
     i == 1 && return i
@@ -72,13 +77,11 @@ function insert!(q::RankedQueue{T}, data::S, rank::T) where {T <: Real, S <: Any
 end
 
 function take!(q::RankedQueue)
-    r = q.rank[1]
-    q.rank[1] = q.rank[end]
-    q.rank    = q.rank[1:end-1]
+    r, q.rank[1] = q.rank[1], q.rank[end]
+    pop!(q.rank)
 
-    d = q.data[1]
-    q.data[1] = q.data[end]
-    q.data    = q.data[1:end-1]
+    d, q.data[1] = q.data[1], q.data[end]
+    pop!(q.data)
 
     rotatedown!(q)
 
@@ -86,7 +89,7 @@ function take!(q::RankedQueue)
 end
 
 function update!(q::RankedQueue{T, S}, data::S, new::T) where {T <: Real, S <: Any}
-    (i = findfirst(q.data .== data)) == nothing && panic("attempting to update a non-existent data value")
+    (i = findfirst(d -> d == data, q.data)) == nothing && panic("attempting to update a non-existent data value")
 
     old = q.rank[i]
     q.rank[i] = new
@@ -100,6 +103,13 @@ function update!(q::RankedQueue{T, S}, data::S, new::T) where {T <: Real, S <: A
            end
 end
 
+function test()
+    Q = RankedQueue((0,1), (1,2), (2,10), (3,23), (4,0))
+    @show Q
+    insert!(Q, 5, -1)
+    @show Q
+
+    nothing
 end
 
-
+end

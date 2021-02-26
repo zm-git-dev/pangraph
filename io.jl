@@ -3,6 +3,8 @@ module DataIO
 using Match
 using GZip
 
+export read_ply, read_matrix
+
 # ------------------------------------------------------------------------
 # globals
 
