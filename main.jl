@@ -1,6 +1,7 @@
 module SeqSpace
 
 using JLD
+using Flux: gpu
 
 include("geo.jl")
 include("io.jl")
@@ -62,11 +63,12 @@ function run(params::Array{HyperParams,1})
     x⃗, ω, ϕ = preprocess(ptcloud)
 
     results = Array{Result}(undef, length(params))
-    for (n, p) in enumerate(params)
+    for (iₚ, p) in enumerate(params)
         M = model(size(x⃗, 1), p.dₒ; Ws = p.Ws)
         y⃗, I = validate(x⃗, p.V)
 
         D² = geodesics(ϕ(x⃗), p.kₙ).^2
+
         loss = (x, i) -> begin
             z = M.pullback(x)
             x̂ = M.pushforward(z)
@@ -75,10 +77,9 @@ function run(params::Array{HyperParams,1})
             ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω)/size(x,2)
 
             # neighborhood isometry
-            D̂² = distance²(z) # XXX: too much allocation in inner loop?
+            D̂² = distance²(z)
 
             R = ball(D²[i,i], p.kₗ)
-
             d = upper_tri(D²[i,i])
             d̂ = upper_tri(D̂²)
 
@@ -108,18 +109,21 @@ function run(params::Array{HyperParams,1})
 
         train!(M, y⃗.train, loss; η=p.η, B = p.B, N = p.N, log = log)
 
-        results[n] = Result(p, M, E)
+        results[iₚ] = Result(p, E, M)
     end
 
     results
 end
 
-using Profile
+using Profile, ProfileView
 
 function main()
     params = [ HyperParams(; Ws=[50,50,50]) ]
     result = run(params)
+
+    Profile.clear()
     @profile run(params)
+    ProfileView.view()
     # save("$root/result/test/jld", "data", result)
 end
 

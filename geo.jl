@@ -1,16 +1,17 @@
 module PointCloud
 
+using LinearAlgebra
+
 import Base:
     eltype, length, minimum, take!
 
-using LinearAlgebra
-
-import ChainRulesCore: rrule, NO_FIELDS
+import ChainRulesCore: 
+    rrule, NO_FIELDS
 
 include("queue.jl")
 using .PriorityQueue
 
-export distance², distance, embed, upper_tri
+export distance², distance²!, distance, embed, upper_tri
 export neighborhood, geodesics, mds, isomap
 
 # ------------------------------------------------------------------------
@@ -25,9 +26,9 @@ distance²(x) = sum( (x[i,:]' .- x[i,:]).^2 for i ∈ 1:size(x,1) )
 distance(x)  = .√(distance²(x))
 
 function distance²!(D², x)
-    for i ∈ 1:size(D²,2)
+    for i ∈ 1:size(x,2)
         for j ∈ 1:(i-1)
-            @inbounds D[i,j] = D[j,i] = sum((x[:,i] - x[:,j]).^2)
+            @inbounds D²[i,j] = D²[j,i] = sum((x[:,i] - x[:,j]).^2)
         end
     end
 end
