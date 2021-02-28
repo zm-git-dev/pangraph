@@ -6,7 +6,7 @@ using LinearAlgebra, Flux, Zygote
 import Base:
     length, reverse, iterate
 
-export model, train!, validate, preprocess, update_dimension!
+export model, train!, validate, preprocess, update_dimension
 
 # NOTE: all data is assumed to be dᵢ x N shaped here!
 #       this is to allow for fast matrix multiplication through the network
@@ -128,7 +128,7 @@ function model(dᵢ, dₒ; Ws=Int[], normalizes=Int[], dropouts=Int[], σ=elu)
     )
 end
 
-function update_dimension!(model, dₒ)
+function update_dimension(model, dₒ; ϵ = 1e-6)
     F, F¯¹, 𝕀 = model
 
     lᵢ = F[end]
@@ -137,17 +137,17 @@ function update_dimension!(model, dₒ)
     Wᵢ, bᵢ = params(lᵢ)
     Wₒ, bₒ = params(lₒ)
 
-    size(Wᵢ) == dₒ && return nothing
-    size(Wᵢ) >  dₒ && error("can not reduce dimensionality of model") 
+    size(Wᵢ,1) == dₒ && return nothing
+    size(Wᵢ,1) >  dₒ && error("can not reduce dimensionality of model") 
 
     δ  = dₒ - size(Wᵢ, 1)
 
-    W̄ᵢ = vcat(Wᵢ, zeros(δ, size(Wᵢ,1)))
-    b̄ᵢ = vcat(bᵢ, zeros(δ))
+    W̄ᵢ = vcat(Wᵢ, ϵ*randn(δ, size(Wᵢ,2)))
+    b̄ᵢ = vcat(bᵢ, ϵ*randn(δ))
     l̄ᵢ = Dense(W̄ᵢ, b̄ᵢ, lᵢ.σ)
 
-    W̄ₒ = hcat(W̄ₒ, zeros(size(W̄₀,1), δ))
-    b̄ₒ = b̄ᵢ
+    W̄ₒ = hcat(Wₒ, ϵ*randn(size(Wₒ,1), δ))
+    b̄ₒ = bₒ
     l̄ₒ = Dense(W̄ₒ, b̄ₒ, lₒ.σ)
 
     F   = Chain( (i < length(F) ? f : l̄ᵢ for (i,f) ∈ enumerate(F))...)
@@ -206,9 +206,7 @@ function train!(model, data, loss; B=64, η=1e-3, N=100, log=noop)
                 loss(x, i)
             end
 
-            if isnan(E)
-                @goto done
-            end
+            isnan(E) && @goto done
 
             ∇Θ = backpropagate(1f0)
             Flux.Optimise.update!(opt, Θ, ∇Θ)
