@@ -81,7 +81,6 @@ function run(params::Array{HyperParams,1}, niter::Int)
     for (iₚ, p) in enumerate(params)
         for iᵢₜ in 1:niter
             M = model(size(x⃗, 1), p.dₒ; Ws = p.Ws, normalizes = p.BN, dropouts = p.DO)
-            @show M
             y⃗, I = validate(x⃗, p.V)
 
             D² = geodesics(ϕ(x⃗), p.kₙ).^2

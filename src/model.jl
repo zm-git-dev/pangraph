@@ -58,7 +58,6 @@ function iterate(it::LayerIterator, state)
                    normalize = state.normalize,
                )
            elseif state.normalize
-               @show state.index, it.width[state.index]
                BatchNorm(it.width[state.index]) |> gpu, (
                    index     = state.index,
                    dropout   = false,
