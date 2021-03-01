@@ -1,5 +1,6 @@
 module SeqSpace
 
+using GZip
 using BSON: @save
 
 include("geo.jl")
@@ -56,6 +57,16 @@ function pointcloud(;α=1, δ=1)
         map(v->v.y, verts)',
         map(v->v.z, verts)'
     )[:,1:δ:end]
+end
+
+function expression()
+    scrna, genes, _ = GZip.open("$root/dvex/dge_normalized.txt.gz") do io
+        read_matrix(io; named_cols=true, named_rows=true)
+    end
+
+    @size scrna
+
+    return scrna, genesk
 end
 
 mean(x)    = sum(x) / length(x)
