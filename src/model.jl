@@ -32,8 +32,8 @@ end
 length(it::LayerIterator)  = length(it.width) + length(it.dropout) + length(it.normalize)
 reverse(it::LayerIterator) = LayerIterator(
                                 reverse(it.width),
-                                Set(length(it.width) - i + 1 for i in it.dropout),
-                                Set(length(it.width) - i + 1 for i in it.normalize),
+                                Set(length(it.width) - i - 1 for i in it.dropout),
+                                Set(length(it.width) - i - 1 for i in it.normalize),
                                 it.σᵢₒ,
                                 it.σ,
                              )
@@ -58,7 +58,8 @@ function iterate(it::LayerIterator, state)
                    normalize = state.normalize,
                )
            elseif state.normalize
-               BatchNorm(it.width[state.index-1]) |> gpu, (
+               @show state.index, it.width[state.index]
+               BatchNorm(it.width[state.index]) |> gpu, (
                    index     = state.index,
                    dropout   = false,
                    normalize = false,
@@ -72,8 +73,8 @@ function iterate(it::LayerIterator, state)
 
                 f, (
                      index     = i,
-                     dropout   = i ∈ it.dropout,
-                     normalize = i ∈ it.normalize,
+                     dropout   = (i-1) ∈ it.dropout,
+                     normalize = (i-1) ∈ it.normalize,
                 )
            else
                nothing
