@@ -21,8 +21,8 @@ const root = "$(homedir())/root/data/seqspace"
 struct HyperParams
     dₒ :: Int          # output dimensionality
     Ws :: Array{Int,1} # network layer widths
-    BN :: Array{Int,1} # layers followed by batch normalization
-    DO :: Array{Int,1} # layers followed by drop outs
+    BN :: Array{Int,1} # (latent) layers followed by batch normalization
+    DO :: Array{Int,1} # (latent) layers followed by drop outs
     N  :: Int          # number of epochs to run
     δ  :: Int          # epoch subsample factor for logging
     η  :: Float64      # learning rate
