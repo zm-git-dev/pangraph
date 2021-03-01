@@ -64,8 +64,6 @@ function expression()
         read_matrix(io; named_cols=true, named_rows=true)
     end
 
-    @show size(scrna), size(genes)
-
     return scrna, genes
 end
 

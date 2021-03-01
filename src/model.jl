@@ -100,9 +100,9 @@ function preprocess(x; dₒ::Union{Nothing,Int}=nothing, ϕ=(x)->x)
     end
 
 	return (
-        data   = (d[1:dₒ] .- μ[1:dₒ]) ./ σ[1:dₒ], 
+        data   = (d[1:dₒ,:] .- μ[1:dₒ]) ./ σ[1:dₒ], 
         weight = λ[1:dₒ], 
-        map    = (x) -> (F.U[:,1:dₒ] * Diagonal(F.S[1:dₒ])) * ((σ[1:dₒ]) .* x[1:dₒ] .+ μ[1:dₒ])
+        map    = (x) -> (F.U[:,1:dₒ] * Diagonal(F.S[1:dₒ])) * ((σ[1:dₒ]) .* x .+ μ[1:dₒ])
     )
 end
 
