@@ -84,7 +84,7 @@ end
 # data scaling / preprocessing
 
 # x is assumed to be dᵢ x N shaped
-function preprocess(x; ϕ=(x)->x)
+function preprocess(x; dₒ::Union{Nothing,Int}=nothing, ϕ=(x)->x)
     X = gpu(x)
 	F = svd(X)
 	
@@ -95,10 +95,14 @@ function preprocess(x; ϕ=(x)->x)
     λ = ϕ.(F.S)
     λ = λ ./ sum(λ)
 	
+    if isnothing(dₒ)
+        dₒ = size(d,1)
+    end
+
 	return (
-        data   = (d .- μ) ./ σ, 
-        weight = λ, 
-        map    = (x) -> (F.U * Diagonal(F.S)) * ((σ) .* x .+ μ)
+        data   = (d[1:dₒ] .- μ[1:dₒ]) ./ σ[1:dₒ], 
+        weight = λ[1:dₒ], 
+        map    = (x) -> (F.U[:,1:dₒ] * Diagonal(F.S[1:dₒ])) * ((σ[1:dₒ]) .* x[1:dₒ] .+ μ[1:dₒ])
     )
 end
 

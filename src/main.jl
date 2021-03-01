@@ -34,7 +34,7 @@ struct HyperParams
     γ  :: Float64      # prefactor of neighborhood isometry loss
 end
 
-HyperParams(; dₒ=2, Ws=Int[], BN=Int[], DO=Int[], N=1000, δ=5, η=1e-3, B=64, V=128, kₙ=12, kₗ=4, γ=.01) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γ)
+HyperParams(; dₒ=2, Ws=Int[], BN=Int[], DO=Int[], N=1000, δ=5, η=1e-3, B=64, V=64, kₙ=12, kₗ=4, γ=.01) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γ)
 
 struct Result
     param :: HyperParams
@@ -64,9 +64,9 @@ function expression()
         read_matrix(io; named_cols=true, named_rows=true)
     end
 
-    @size scrna
+    @show size(scrna), size(genes)
 
-    return scrna, genesk
+    return scrna, genes
 end
 
 mean(x)    = sum(x) / length(x)
@@ -76,8 +76,8 @@ ball(D, k) = mean(sort(view(D,:,i))[k+1] for i in 1:size(D,2))
 # main functions
 
 function run(params::Array{HyperParams,1}, niter::Int)
-    ptcloud = embed(pointcloud(; α=1/500, δ=10), 50; σ = .05)
-    x⃗, ω, ϕ = preprocess(ptcloud)
+    scrna, genes = expression()
+    x⃗, ω, ϕ      = preprocess(scrna; dₒ=50)
 
     results = Array{Result}(undef, length(params)*niter)
     for (iₚ, p) in enumerate(params)
