@@ -45,10 +45,14 @@ I = ingredients("../src/infer.jl")
 # ╔═╡ 36f6f034-7b8b-11eb-0f7c-3bf426e8c858
 param = M.SeqSpace.HyperParams(;
 	N  = 1000, 
-	Ws = [50,50], 
-	V  = 81,
+	Ws = [100,100,50,25], 
+	V  = 145,
+	B  = 128,
+	kₗ = 12,
 	δ  = 1,
-	γ  = 0,
+	γₓ = .001,
+	γₛ = .001,
+	dₒ = 3,
 )
 
 # ╔═╡ 4ce81e9a-7b8b-11eb-2335-c960ad189017
@@ -60,29 +64,27 @@ Plots.plot(r.loss.train, label="train"); Plots.plot!(r.loss.valid, label="valida
 # ╔═╡ d8066234-7b90-11eb-331e-9549202425c1
 begin
 	z = r.model.pullback(data.x)
-	x̂ = data.map(r.model.pushforward(z))
+	x̂ = r.model.pushforward(z)
 end;
 
+# ╔═╡ 77980d76-7ba4-11eb-2f5c-3f55f1540e8d
+Plots.scatter(data.x[1,:],x̂[1,:],alpha=.5); for i ∈ 2:9 Plots.scatter!(data.x[i,:], x̂[i,:],alpha=.25) end; Plots.scatter!(data.x[10,:],x̂[10,:],alpha=.1)
+
 # ╔═╡ 085eb4dc-7b97-11eb-02c1-1761f9ed4e8c
-begin
-	scrna = data.map(data.x)
-	invert, embryo = I.Inference.inversion(scrna, data.genes)
-end
+invert, embryo = I.Inference.inversion(); Ψ = invert(0.5);
 
 # ╔═╡ dbe1bdac-7b9c-11eb-0e3a-577e252a1f78
 begin
-	Ψ = invert(0.5)
-	
 	ψᵣ = Ψ  ./ sum(Ψ, dims=2)
 	ψₗ = (Ψ ./ sum(Ψ, dims=1))'
-end
+end;
 
 # ╔═╡ 9b6544b0-7b9c-11eb-13aa-bf2ce2abeb55
-r̂ = (ψₗ * embryo)'
+r̂ = (ψₗ * embryo)'; AP = r̂[1,:]; DV = atan.(r̂[2,:], r̂[3,:])
 
 # ╔═╡ fdedda4a-7b90-11eb-30ba-d9c76a5ccd08
 makie() do s
-	scatter!(s, z[1,:], z[2,:],color=r̂[2,:])
+	scatter!(s, z[1,:], z[2,:], z[3,:], color=DV, markersize=5000)
 end
 
 # ╔═╡ Cell order:
@@ -97,6 +99,7 @@ end
 # ╠═4ce81e9a-7b8b-11eb-2335-c960ad189017
 # ╠═54f7b29c-7b8d-11eb-3fe4-f5d4ee676431
 # ╠═d8066234-7b90-11eb-331e-9549202425c1
+# ╠═77980d76-7ba4-11eb-2f5c-3f55f1540e8d
 # ╠═085eb4dc-7b97-11eb-02c1-1761f9ed4e8c
 # ╠═dbe1bdac-7b9c-11eb-0e3a-577e252a1f78
 # ╠═9b6544b0-7b9c-11eb-13aa-bf2ce2abeb55

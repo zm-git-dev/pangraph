@@ -195,7 +195,7 @@ function validate(data, len)
     )
 end
 
-function noop(epoch, loss, model) end
+function noop(epoch) end
 
 # data training
 function train!(model, data, loss; B=64, η=1e-3, N=100, log=noop)
@@ -216,7 +216,7 @@ function train!(model, data, loss; B=64, η=1e-3, N=100, log=noop)
             Flux.Optimise.update!(opt, Θ, ∇Θ)
         end
 
-        log(n, loss, model)
+        log(n)
     end
     @label done
     testmode!(model.identity)

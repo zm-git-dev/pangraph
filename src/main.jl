@@ -5,9 +5,10 @@ using BSON: @save
 
 include("geo.jl")
 include("io.jl")
+include("rank.jl")
 include("model.jl")
 
-using .PointCloud, .DataIO, .ML
+using .PointCloud, .DataIO, .SoftRank, .ML
 
 export Result, HyperParams
 export run
@@ -30,10 +31,11 @@ struct HyperParams
     V  :: Int          # number of points to partition for validation
     kₙ :: Int          # number of neighbors to use to estimate geodesics
     kₗ :: Int          # average number of neighbors to impose isometry on 
-    γ  :: Float64      # prefactor of neighborhood isometry loss
+    γₓ :: Float64      # prefactor of neighborhood isometry loss
+    γₛ :: Float64      # prefactor of distance soft rank loss
 end
 
-HyperParams(; dₒ=2, Ws=Int[], BN=Int[], DO=Int[], N=1000, δ=5, η=1e-3, B=64, V=64, kₙ=12, kₗ=3, γ=.01) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γ)
+HyperParams(; dₒ=2, Ws=Int[], BN=Int[], DO=Int[], N=1000, δ=5, η=1e-3, B=64, V=64, kₙ=12, kₗ=3, γₓ=.01, γₛ=1) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γₓ, γₛ)
 
 struct Result
     param :: HyperParams
@@ -68,7 +70,11 @@ end
 
 mean(x)    = sum(x) / length(x)
 median(x)  = sort(x)[length(x)÷2+1]
-ball(D, k) = mean([sort(view(D,:,i))[k+1] for i in 1:size(D,2)])
+var(x)     = mean((x.-mean(x)).^2)
+std(x)     = sqrt(var(x))
+cov(x,y)   = mean((x.-mean(x)) .* (y.-mean(y)))
+
+ball(D, k) = median([sort(view(D,:,i))[k+1] for i in 1:size(D,2)])
 
 # ------------------------------------------------------------------------
 # main functions
@@ -77,9 +83,7 @@ function run(params, niter::Int)
     println("loading data...")
 
     scrna, genes = expression()
-    x⃗, ω, ϕ      = preprocess(scrna; dₒ=50, ϕ=sqrt)
-
-    @show size(x⃗), size(ϕ(x⃗))
+    x⃗, ω, ϕ      = preprocess(scrna; dₒ=50) #, ϕ=sqrt)
 
     println("computing geodesics...")
 
@@ -95,6 +99,7 @@ function run(params, niter::Int)
                 D², kₙ = geodesics(ϕ(x⃗), p.kₙ).^2, p.kₙ
             end
 
+            R = ball(D², p.kₗ)
             loss = (x, i, log) -> begin
                 z = M.pullback(x)
                 x̂ = M.pushforward(z)
@@ -102,35 +107,40 @@ function run(params, niter::Int)
                 # reconstruction
                 ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω)/size(x,2)
 
-                # neighborhood isometry
+                # pairwise distances
                 D̂² = distance²(z)
                 D̄² = D²[i,i]
-
-                R = ball(D̄², p.kₗ)
+                # R = ball(D̄², p.kₗ)
+                
                 d = upper_tri(D̄²)
                 d̂ = upper_tri(D̂²)
 
-                n = (d .<= R) .| (d̂ .<= R)
-
+                # neighborhood isometry
+                n  = (d .<= R) .| (d̂ .<= R)
                 ϵₓ = mean( (d[n] .- d̂[n]).^2 ) / R^2
+
+                # distance softranks
+                r, r̂ = softrank(d), softrank(d̂)
+                ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
+                
                 if log
                     @show sum(n)/length(n)
-                    @show ϵᵣ, ϵₓ
+                    @show ϵᵣ, ϵₓ, ϵₛ
                 end
 
-                return ϵᵣ + p.γ*ϵₓ
+                return ϵᵣ + p.γₛ*ϵₓ + p.γₛ*ϵₛ
             end
 
             E = (
                 train = zeros(p.N÷p.δ),
                 valid = zeros(p.N÷p.δ),
             )
-            log  = (n, loss, model) -> begin
+            log  = (n) -> begin
                 if (n-1) % p.δ == 0 
                     @show n
 
-                    E.train[(n-1)÷p.δ+1] = loss(y⃗.train, I.train, true)
-                    E.valid[(n-1)÷p.δ+1] = loss(y⃗.valid, I.valid, true)
+                    E.train[(n-1)÷p.δ+1] = loss(y⃗.train, I.train, (n-1) % 10 == 0)
+                    E.valid[(n-1)÷p.δ+1] = loss(y⃗.valid, I.valid, (n-1) % 10 == 0)
                 end
 
                 nothing

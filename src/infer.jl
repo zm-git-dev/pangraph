@@ -49,6 +49,17 @@ function virtualembryo()
     )
 end
 
+function scrna()
+    expression, genes, _ = GZip.open("$root/dvex/dge_normalized.txt.gz") do io
+        read_matrix(io; named_cols=true, named_rows=true)
+    end
+
+    return (
+        data = expression',
+        gene = columns(genes),
+    )
+end
+
 function match(x, y)
     index = Array{String}(undef,length(x))
     for (g,i) in x
@@ -143,12 +154,9 @@ function sinkhorn(M::Array{Float64,2};
     return M.*(r*c')
 end
 
-function inversion(scrna, genes)
+function inversion()
     ref, pointcloud = virtualembryo()
-    qry = (
-        data = scrna',
-        gene = columns(genes),
-    )
+    qry = scrna()
 
     Σ = cost(ref, qry; α=1.0, β=2.6, γ=0.65) # TODO: expose parameters?
 
