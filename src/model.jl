@@ -207,7 +207,7 @@ function train!(model, data, loss; B=64, η=1e-3, N=100, log=noop)
         X, I = batch(data, B)
         for (i,x) ∈ zip(I,X)
             E, backpropagate = pullback(Θ) do
-                loss(x, i)
+                loss(x, i, false)
             end
 
             isnan(E) && @goto done

@@ -7,6 +7,9 @@ function cmd()
     SeqSpace.main(args[3], parse(Int, args[2]), args[1])
 end
 
+# ------------------------------------------------------------------------
+# main point of entry
+
 if abspath(PROGRAM_FILE) == @__FILE__
     cmd()
 end

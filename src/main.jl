@@ -10,11 +10,10 @@ include("model.jl")
 using .PointCloud, .DataIO, .ML
 
 export Result, HyperParams
+export run
 
 # ------------------------------------------------------------------------
 # globals
-
-const root = "$(homedir())/root/data/seqspace"
 
 # ------------------------------------------------------------------------
 # types
@@ -34,7 +33,7 @@ struct HyperParams
     γ  :: Float64      # prefactor of neighborhood isometry loss
 end
 
-HyperParams(; dₒ=2, Ws=Int[], BN=Int[], DO=Int[], N=1000, δ=5, η=1e-3, B=64, V=64, kₙ=12, kₗ=4, γ=.01) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γ)
+HyperParams(; dₒ=2, Ws=Int[], BN=Int[], DO=Int[], N=1000, δ=5, η=1e-3, B=64, V=64, kₙ=12, kₗ=3, γ=.01) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γ)
 
 struct Result
     param :: HyperParams
@@ -68,24 +67,35 @@ function expression()
 end
 
 mean(x)    = sum(x) / length(x)
-ball(D, k) = mean(sort(view(D,:,i))[k+1] for i in 1:size(D,2))
+median(x)  = sort(x)[length(x)÷2+1]
+ball(D, k) = mean([sort(view(D,:,i))[k+1] for i in 1:size(D,2)])
 
 # ------------------------------------------------------------------------
 # main functions
 
-function run(params::Array{HyperParams,1}, niter::Int)
-    scrna, genes = expression()
-    x⃗, ω, ϕ      = preprocess(scrna; dₒ=50)
+function run(params, niter::Int)
+    println("loading data...")
 
+    scrna, genes = expression()
+    x⃗, ω, ϕ      = preprocess(scrna; dₒ=50, ϕ=sqrt)
+
+    @show size(x⃗), size(ϕ(x⃗))
+
+    println("computing geodesics...")
+
+    D², kₙ  = geodesics(ϕ(x⃗), params[1].kₙ).^2, params[1].kₙ
     results = Array{Result}(undef, length(params)*niter)
+
     for (iₚ, p) in enumerate(params)
         for iᵢₜ in 1:niter
             M = model(size(x⃗, 1), p.dₒ; Ws = p.Ws, normalizes = p.BN, dropouts = p.DO)
             y⃗, I = validate(x⃗, p.V)
 
-            D² = geodesics(ϕ(x⃗), p.kₙ).^2
+            if p.kₙ != kₙ
+                D², kₙ = geodesics(ϕ(x⃗), p.kₙ).^2, p.kₙ
+            end
 
-            loss = (x, i) -> begin
+            loss = (x, i, log) -> begin
                 z = M.pullback(x)
                 x̂ = M.pushforward(z)
 
@@ -93,19 +103,22 @@ function run(params::Array{HyperParams,1}, niter::Int)
                 ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω)/size(x,2)
 
                 # neighborhood isometry
-                D̂² = distance²(z)
+                # D̂² = distance²(z)
+                # D̄² = D²[i,i]
 
-                R = ball(D²[i,i], p.kₗ)
-                d = upper_tri(D²[i,i])
-                d̂ = upper_tri(D̂²)
+                # R = ball(D̄², p.kₗ)
+                # d = upper_tri(D̄²)
+                # d̂ = upper_tri(D̂²)
 
-                n = d .<= R
-                n̂ = d̂ .<= R
+                # n = (d .<= R) .| (d̂ .<= R)
 
-                ϵₓ = .5*(sqrt(mean( (d[n] .- d̂[n]).^2 )) 
-                       + sqrt(mean( (d̂[n̂] .- d[n̂]).^2 )))
+                # ϵₓ = mean( (d[n] .- d̂[n]).^2 ) / R^2
+                if log
+                    #@show sum(n)/length(n)
+                    @show ϵᵣ #, ϵₓ
+                end
 
-                return ϵᵣ + p.γ*ϵₓ
+                return ϵᵣ #+ p.γ*ϵₓ
             end
 
             E = (
@@ -116,21 +129,24 @@ function run(params::Array{HyperParams,1}, niter::Int)
                 if (n-1) % p.δ == 0 
                     @show n
 
-                    E.train[(n-1)÷p.δ+1] = loss(y⃗.train, I.train)
-                    E.valid[(n-1)÷p.δ+1] = loss(y⃗.valid, I.valid)
+                    E.train[(n-1)÷p.δ+1] = loss(y⃗.train, I.train, true)
+                    E.valid[(n-1)÷p.δ+1] = loss(y⃗.valid, I.valid, true)
                 end
 
                 nothing
             end
 
+            println("training model...")
             train!(M, y⃗.train, loss; η=p.η, B = p.B, N = p.N, log = log)
 
             results[niter*(iₚ-1)+iᵢₜ] = Result(p, E, M)
         end
     end
 
-    results
+    return results, (x=x⃗, genes=genes, map=ϕ) 
 end
+
+run(param...) = run(collect(param), 1)
 
 function main(input, niter, output)
     params = Result[]
@@ -138,8 +154,8 @@ function main(input, niter, output)
         params = eval(Meta.parse(read(io, String)))
     end
     
-    result = run(params, niter)
-    @save "$root/result/$output.bson" result
+    result, data = run(params, niter)
+    @save "$root/result/$output.bson" result data
 end
 
 end

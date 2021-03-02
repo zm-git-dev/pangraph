@@ -3,13 +3,12 @@ module DataIO
 using Match
 using GZip
 
-export read_ply, read_matrix
+export read_ply, read_matrix, root
 
 # ------------------------------------------------------------------------
 # globals
 
-const root = "/home/nolln/root/data/seqspace"
-
+const root = "$(homedir())/root/data/seqspace"
 panic(msg) = error(msg)
 
 # ------------------------------------------------------------------------
