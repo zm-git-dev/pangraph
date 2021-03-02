@@ -145,12 +145,10 @@ end
 
 function inversion(scrna, genes)
     ref, pointcloud = virtualembryo()
-    @show size(ref.data)
     qry = (
         data = scrna',
         gene = columns(genes),
     )
-    @show size(qry.data)
 
     Σ = cost(ref, qry; α=1.0, β=2.6, γ=0.65) # TODO: expose parameters?
 

@@ -48,6 +48,7 @@ param = M.SeqSpace.HyperParams(;
 	Ws = [50,50], 
 	V  = 81,
 	δ  = 1,
+	γ  = 0,
 )
 
 # ╔═╡ 4ce81e9a-7b8b-11eb-2335-c960ad189017

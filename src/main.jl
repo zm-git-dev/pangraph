@@ -103,22 +103,22 @@ function run(params, niter::Int)
                 ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω)/size(x,2)
 
                 # neighborhood isometry
-                # D̂² = distance²(z)
-                # D̄² = D²[i,i]
+                D̂² = distance²(z)
+                D̄² = D²[i,i]
 
-                # R = ball(D̄², p.kₗ)
-                # d = upper_tri(D̄²)
-                # d̂ = upper_tri(D̂²)
+                R = ball(D̄², p.kₗ)
+                d = upper_tri(D̄²)
+                d̂ = upper_tri(D̂²)
 
-                # n = (d .<= R) .| (d̂ .<= R)
+                n = (d .<= R) .| (d̂ .<= R)
 
-                # ϵₓ = mean( (d[n] .- d̂[n]).^2 ) / R^2
+                ϵₓ = mean( (d[n] .- d̂[n]).^2 ) / R^2
                 if log
-                    #@show sum(n)/length(n)
-                    @show ϵᵣ #, ϵₓ
+                    @show sum(n)/length(n)
+                    @show ϵᵣ, ϵₓ
                 end
 
-                return ϵᵣ #+ p.γ*ϵₓ
+                return ϵᵣ + p.γ*ϵₓ
             end
 
             E = (
