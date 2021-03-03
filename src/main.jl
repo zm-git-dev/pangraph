@@ -35,7 +35,7 @@ struct HyperParams
     γₛ :: Float64      # prefactor of distance soft rank loss
 end
 
-HyperParams(; dₒ=2, Ws=Int[], BN=Int[], DO=Int[], N=1000, δ=5, η=1e-3, B=64, V=64, kₙ=12, kₗ=3, γₓ=.01, γₛ=1) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γₓ, γₛ)
+HyperParams(; dₒ=3, Ws=Int[], BN=Int[], DO=Int[], N=500, δ=5, η=5e-4, B=64, V=81, kₙ=12, kₗ=3, γₓ=1e-4, γₛ=1) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γₓ, γₛ)
 
 struct Result
     param :: HyperParams
@@ -82,8 +82,9 @@ ball(D, k) = median([sort(view(D,:,i))[k+1] for i in 1:size(D,2)])
 function run(params, niter::Int)
     println("loading data...")
 
+    # scrna, genes = embed(pointcloud(;α=1/500, δ=15), 50; σ=.02), nothing
     scrna, genes = expression()
-    x⃗, ω, ϕ      = preprocess(scrna; dₒ=50) #, ϕ=sqrt)
+    x⃗, ω, ϕ      = preprocess(scrna; dₒ=35) #, ϕ=sqrt)
 
     println("computing geodesics...")
 
@@ -116,19 +117,22 @@ function run(params, niter::Int)
                 d̂ = upper_tri(D̂²)
 
                 # neighborhood isometry
-                n  = (d .<= R) .| (d̂ .<= R)
-                ϵₓ = mean( (d[n] .- d̂[n]).^2 ) / R^2
+                # n  = d .<= R
+                # nₑ = sum(n)
+                # n  = n .| (d̂ .<= R)
+                # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
+                ϵₓ = sum( (d .- d̂).^2 ) / (sum(d)*sum(d̂))
 
                 # distance softranks
-                r, r̂ = softrank(d), softrank(d̂)
-                ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
+                # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+                # ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
                 
                 if log
-                    @show sum(n)/length(n)
-                    @show ϵᵣ, ϵₓ, ϵₛ
+                    # @show sum(n)/length(n)
+                    @show ϵᵣ, ϵₓ#, ϵₛ
                 end
 
-                return ϵᵣ + p.γₛ*ϵₓ + p.γₛ*ϵₛ
+                return ϵᵣ + p.γₓ*ϵₓ #+ p.γₛ*ϵₛ
             end
 
             E = (
@@ -153,7 +157,7 @@ function run(params, niter::Int)
         end
     end
 
-    return results, (x=x⃗, genes=genes, map=ϕ) 
+    return results, (x=x⃗, raw=scrna, genes=genes, map=ϕ) 
 end
 
 run(param...) = run(collect(param), 1)

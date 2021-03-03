@@ -101,9 +101,9 @@ function projection(x)
 end
 
 rank(x)             = invperm(sortperm(x))
-softrank(x; ϵ=1e-3) = projection(x ./ ϵ)
+softrank(x; ϵ=1e-6) = projection(x ./ ϵ)
 	
-function rrule(::typeof(softrank), x; ϵ=1e-3)
+function rrule(::typeof(softrank), x; ϵ=1e-6)
 	# scale input
 	x = x ./ ϵ
 	

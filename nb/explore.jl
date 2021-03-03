@@ -44,14 +44,16 @@ I = ingredients("../src/infer.jl")
 
 # ╔═╡ 36f6f034-7b8b-11eb-0f7c-3bf426e8c858
 param = M.SeqSpace.HyperParams(;
-	N  = 1000, 
-	Ws = [100,100,50,25], 
-	V  = 145,
-	B  = 128,
-	kₗ = 12,
+	N  = 250, 
+	Ws = [100,50,50,50,50,50,50,50,25],
+	BN = [1,2,3,4,5,6,7],
+	V  = 81,
+	B  = 64,
+	kₗ = 20,
 	δ  = 1,
-	γₓ = .001,
-	γₛ = .001,
+	γₓ = 5e-3,
+	γₛ = 0,
+	η  = 5e-4,
 	dₒ = 3,
 )
 
@@ -70,6 +72,15 @@ end;
 # ╔═╡ 77980d76-7ba4-11eb-2f5c-3f55f1540e8d
 Plots.scatter(data.x[1,:],x̂[1,:],alpha=.5); for i ∈ 2:9 Plots.scatter!(data.x[i,:], x̂[i,:],alpha=.25) end; Plots.scatter!(data.x[10,:],x̂[10,:],alpha=.1)
 
+# ╔═╡ 02e14eae-7bac-11eb-17ed-43043c6eac4f
+mean(x) = sum(x)/length(x)
+
+# ╔═╡ b49b9c00-7baa-11eb-3035-6f0e4aea4be8
+D = M.SeqSpace.PointCloud.upper_tri(M.SeqSpace.PointCloud.distance²(z)); R = M.SeqSpace.SoftRank.softrank(D/mean(D)); R̄ = M.SeqSpace.SoftRank.rank(D);
+
+# ╔═╡ e5d2ce9c-7baa-11eb-11d5-f55390b07b2c
+Plots.scatter(R̄[1:1000], R[1:1000])
+
 # ╔═╡ 085eb4dc-7b97-11eb-02c1-1761f9ed4e8c
 invert, embryo = I.Inference.inversion(); Ψ = invert(0.5);
 
@@ -84,7 +95,18 @@ r̂ = (ψₗ * embryo)'; AP = r̂[1,:]; DV = atan.(r̂[2,:], r̂[3,:])
 
 # ╔═╡ fdedda4a-7b90-11eb-30ba-d9c76a5ccd08
 makie() do s
-	scatter!(s, z[1,:], z[2,:], z[3,:], color=DV, markersize=5000)
+	scatter!(s, z[1,:], z[2,:], z[3,:], color=AP, markersize=500)
+end
+
+# ╔═╡ ae5ab5ca-7bc2-11eb-0dee-fb999487b907
+scrna, genes = M.SeqSpace.expression(); scrnaᵣ, λ, Φ = M.SeqSpace.ML.preprocess(scrna; dₒ=35);
+
+# ╔═╡ 5c390788-7bc2-11eb-1a73-391f5cbbb17e
+z̄ = M.SeqSpace.PointCloud.isomap(Φ(scrnaᵣ), 3; sparse=true);
+
+# ╔═╡ c6feb4f4-7bc3-11eb-25b5-f778fb6d0621
+makie() do s
+	scatter!(s, z̄[:,1], z̄[:,2], z̄[:,3], color=AP, markersize=3000)
 end
 
 # ╔═╡ Cell order:
@@ -100,7 +122,13 @@ end
 # ╠═54f7b29c-7b8d-11eb-3fe4-f5d4ee676431
 # ╠═d8066234-7b90-11eb-331e-9549202425c1
 # ╠═77980d76-7ba4-11eb-2f5c-3f55f1540e8d
+# ╠═02e14eae-7bac-11eb-17ed-43043c6eac4f
+# ╠═b49b9c00-7baa-11eb-3035-6f0e4aea4be8
+# ╠═e5d2ce9c-7baa-11eb-11d5-f55390b07b2c
 # ╠═085eb4dc-7b97-11eb-02c1-1761f9ed4e8c
 # ╠═dbe1bdac-7b9c-11eb-0e3a-577e252a1f78
 # ╠═9b6544b0-7b9c-11eb-13aa-bf2ce2abeb55
 # ╠═fdedda4a-7b90-11eb-30ba-d9c76a5ccd08
+# ╠═ae5ab5ca-7bc2-11eb-0dee-fb999487b907
+# ╠═5c390788-7bc2-11eb-1a73-391f5cbbb17e
+# ╠═c6feb4f4-7bc3-11eb-25b5-f778fb6d0621

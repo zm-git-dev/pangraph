@@ -234,10 +234,10 @@ geodesics(x, k; sparse=true) = geodesics(neighborhood(x, k); sparse=sparse)
 function mds(D², dₒ)
     N = size(D²,1)
     C = I - fill(1/N, (N,N))
-    B = -1/2 * C*D²*D
+    B = -1/2 * C*D²*C
 
     eig = eigen(B)
-    ι   = sortperm(λ.values; rev=true)
+    ι   = sortperm(eig.values; rev=true)
 
     λ = eig.values[ι]
     ν = eig.vectors[:,ι]
@@ -245,9 +245,9 @@ function mds(D², dₒ)
     return ν[:,1:dₒ] * Diagonal(sqrt.(λ[1:dₒ]))
 end
 
-function isomap(x, dₒ; k=12)
+function isomap(x, dₒ; k=12, sparse=true)
     G = neighborhood(x, k)
-    D = geodesics(G)
+    D = geodesics(G; sparse=sparse)
     return mds(D.^2, dₒ)
 end
 
