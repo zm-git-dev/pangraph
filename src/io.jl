@@ -3,7 +3,9 @@ module DataIO
 using Match
 using GZip
 
-export read_ply, read_matrix, root
+using SparseArrays
+
+export read_ply, read_matrix, read_mtx, root
 
 # ------------------------------------------------------------------------
 # globals
@@ -122,13 +124,95 @@ function read_ply(io::IO)
 end
 
 # ------------------------------------------------------------------------
+# matrix market exchange format
+
+function read_mtx(io::IO)
+    header = readwords(io)
+    if header[1] != "%%MatrixMarket"
+        panic("can not interpret given IO stream as matrix market exchange")
+    end
+
+    T = 
+    if header[4] == "integer"
+        Int
+    elseif header[4] == "real"
+        Float64
+    elseif header[4] == "complex"
+        Complex
+    elseif header[4] == "pattern"
+        Bool
+    else
+        panic("unrecognized element type '$(header[4])' in matrix file")
+    end
+
+    D = 
+    if header[2] == "matrix"
+        2
+    elseif header[2] == "vector"
+        1
+    else
+        panic("unrecognized data type '$(header[2])' in matrix file")
+    end
+
+    data = 
+    if header[3] == "array"
+        line = readwords(io)
+        while line[1][1] == '%'
+            line = readwords(io)
+        end
+
+        m, n  = parse.(Int, line[1:2])
+        array = Array{T,D}(undef, m, n)
+
+        for i in 1:m
+            for j in 1:n
+                line = getline(io)
+                array[i,j] = parse(T, line)
+            end
+        end
+
+        array
+    elseif header[3] == "coordinate"
+        line = readwords(io)
+        while line[1][1] == '%'
+            line = readwords(io)
+        end
+
+        m, n, numel = parse.(Int, line[1:3])
+        row = Array{Int,1}(undef, numel)
+        col = Array{Int,1}(undef, numel)
+        val = Array{T,1}(undef, numel)
+
+        for (i,line) in enumerate(eachline(io))
+            word = split(line)
+            row[i] = parse(Int, word[1])
+            col[i] = parse(Int, word[2])
+            val[i] = parse(T, word[3])
+        end
+
+        @show m, n
+        sparse(row, col, val, m, n)
+    else
+        panic("unrecognized data format '$(header[3])'")
+    end
+end
+
+# ------------------------------------------------------------------------
 # scRNAseq file formats
 
 function read_matrix(io::IO; type=Float64, named_cols=false, named_rows=false)
-    cols  = named_cols ?  readwords(io) : nothing
-    ncols = length(cols)
+    cols = named_cols ? readwords(io) : nothing
 
     x = position(io)
+    ncols = if named_cols
+        length(cols)
+    else
+        words = readwords(io)
+        n = length(words) - (named_rows ? 1 : 0)
+        seek(io, x)
+
+        n
+    end
     nrows = sum(1 for row in eachline(io))
     seek(io, x)
 

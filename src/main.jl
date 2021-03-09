@@ -60,9 +60,15 @@ function pointcloud(;α=1, δ=1)
     )[:,1:δ:end]
 end
 
-function expression()
-    scrna, genes, _ = GZip.open("$root/dvex/dge_normalized.txt.gz") do io
-        read_matrix(io; named_cols=true, named_rows=true)
+function expression(;raw=false)
+    scrna, genes, _  = if raw
+        GZip.open("$root/dvex/dge_raw.txt.gz") do io
+            read_matrix(io; named_cols=false, named_rows=true)
+        end
+    else
+        GZip.open("$root/dvex/dge_normalized.txt.gz") do io
+            read_matrix(io; named_cols=true, named_rows=true)
+        end
     end
 
     return scrna, genes
@@ -74,7 +80,7 @@ var(x)     = mean((x.-mean(x)).^2)
 std(x)     = sqrt(var(x))
 cov(x,y)   = mean((x.-mean(x)) .* (y.-mean(y)))
 
-ball(D, k) = median([sort(view(D,:,i))[k+1] for i in 1:size(D,2)])
+ball(D, k) = mean(sort(view(D,:,i))[k+1] for i in 1:size(D,2))
 
 # ------------------------------------------------------------------------
 # main functions
@@ -111,17 +117,17 @@ function run(params, niter::Int)
                 # pairwise distances
                 D̂² = distance²(z)
                 D̄² = D²[i,i]
-                # R = ball(D̄², p.kₗ)
+                R = ball(D̄², p.kₗ)
                 
                 d = upper_tri(D̄²)
                 d̂ = upper_tri(D̂²)
 
                 # neighborhood isometry
-                # n  = d .<= R
+                n  = (d .<= R) .| (d̂ .<= R)
                 # nₑ = sum(n)
                 # n  = n .| (d̂ .<= R)
                 # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
-                ϵₓ = sum( (d .- d̂).^2 ) / (sum(d)*sum(d̂))
+                ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n]))
 
                 # distance softranks
                 # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
