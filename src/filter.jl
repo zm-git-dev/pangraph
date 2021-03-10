@@ -1,11 +1,11 @@
-module Normalization
+module DataFilter
 
 using Markdown
 using LinearAlgebra
 using Statistics, StatsBase
 using Optim, NLSolversBase, SpecialFunctions
 
-export fit_glm, filter_genes
+export fit_glm, genes
 
 md"""
 ## Data filtering
@@ -188,7 +188,7 @@ function fit_glm(data)
     return fit
 end
 
-function filter_genes(data; min=1e-3)
+function genes(data; min=1e-3)
 	μ = vec(mean(data,dims=2))
     return Matrix(data[μ .> min,:])
 end
