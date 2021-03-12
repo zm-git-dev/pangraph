@@ -43,15 +43,16 @@ Hafemeister, C. & Satija, R. (2019) claims this overfits and thus put an heurest
 
 # negative binomial(2)
 # link function: μ = exp.(α .+ β.*ḡ)
+# NOTE: we put a prior on β to be 1
 
-function make_loss(x⃗, ḡ)
+function make_loss(x⃗, ḡ, σ¯², β₀)
 	function f(Θ)
 		α, β, γ = Θ
 		
 		G₁ = (loggamma(x + γ) - loggamma.(x+1) .- loggamma(γ) for x ∈ x⃗)
 		G₂ = (x*(α+β*g)-(x+γ)*log(exp(α + β*g) .+ γ) for (g,x) ∈ zip(ḡ, x⃗))
 
-		return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂))
+        return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂)) + .5*σ¯²*(β-β₀)^2
 	end
 	
 	function ∂f!(∂Θ, Θ)
@@ -64,7 +65,7 @@ function make_loss(x⃗, ḡ)
 		G₂ = (digamma(x+γ)-digamma(γ)+log(γ)+1-log(γ+μ)-(x+γ)/(γ+μ) for (x,μ) ∈ zip(x⃗,Mu))
 
 		∂Θ[1] = -mean(G₁)
-		∂Θ[2] = -mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ))
+        ∂Θ[2] = -mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ)) + σ¯²*(β-β₀)
 		∂Θ[3] = -mean(G₂)
 	end
 	
@@ -82,7 +83,7 @@ function make_loss(x⃗, ḡ)
 		# α,β submatrix
 		∂²Θ[1,1] = mean(G₁)
 		∂²Θ[1,2] = ∂²Θ[2,1] = mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ))
-		∂²Θ[2,2] = mean(g₁*g^2 for (g₁,g) ∈ zip(G₁,ḡ))
+		∂²Θ[2,2] = mean(g₁*g^2 for (g₁,g) ∈ zip(G₁,ḡ)) + σ¯²
 		
 		# γ row/column
 		∂²Θ[3,3] = -mean(G₄)
@@ -96,12 +97,12 @@ end
 # ------------------------------------------------------------------------
 # main exports
 
-function normalize(x, ḡ; check_grad=false)
+function normalize(x, ḡ; σ¯²=0, β₀=1, check_grad=false)
 	μ = mean(x)
 	
 	Θ₀ = [
 		log(μ),
-		0,
+		β₀,
 		μ^2 / (var(x)-μ),
 	]
 	
@@ -110,16 +111,16 @@ function normalize(x, ḡ; check_grad=false)
 	end
 	
 	loss = check_grad ? TwiceDifferentiable(
-		make_loss(x, ḡ)[1],
+		make_loss(x, ḡ, σ¯², β₀)[1],
 		Θ₀;
 		autodiff=:forward
 	) : TwiceDifferentiable(
-		make_loss(x, ḡ)...,
+		make_loss(x, ḡ, σ¯², β₀)...,
 		Θ₀
 	)
 	
 	if check_grad
-		f, ∂f!, ∂²f! = make_loss(x, ḡ)
+		f, ∂f!, ∂²f! = make_loss(x, ḡ, σ¯², β₀)
 		∂, ∂² = zeros(3), zeros(3,3)
 
 		∂f!(∂,Θ₀)
@@ -159,7 +160,7 @@ function normalize(x, ḡ; check_grad=false)
 	)
 end
 
-function fit_glm(data)
+function fit_glm(data; σ¯²=0, μ=1)
     T = NamedTuple{
         (
             :parameters, 
@@ -182,7 +183,7 @@ function fit_glm(data)
 
     Threads.@threads for i = 1:size(data,1)
         @show i
-        fit[i] = normalize(data[i,:], ḡ)
+        fit[i] = normalize(data[i,:], ḡ; σ¯²=σ¯², β₀=μ)
     end
 
     return fit
@@ -191,6 +192,59 @@ end
 function genes(data; min=1e-3)
 	μ = vec(mean(data,dims=2))
     return Matrix(data[μ .> min,:])
+end
+
+# ------------------------------------------------------------------------
+# point of entry for test
+
+using Plots
+using Random, Distributions, SpecialFunctions
+
+function test()
+    Ns  = [100, 500, 1000, 5000, 10000, 50000]
+    nit = 50
+
+    δ = zeros(length(Ns), nit, 3)
+    for (n, N) ∈ enumerate(Ns)
+        A = rand(Gamma(2,2), nit)
+        B = rand(Gamma(2,2), nit)
+        C = rand(Gamma(2,2), nit)
+        for it ∈ 1:nit
+            α,β,γ = A[it],B[it],C[it]
+
+            z = rand(Exponential(.1), N)
+            μ⃗ = exp.(α .+ β.*z)
+            x = zeros(length(μ⃗))
+            for (i, μ) ∈ enumerate(μ⃗)
+                Γ = Gamma(γ, μ/γ)
+                λ = rand(Γ,1)[1]
+                x[i] = rand(Poisson(λ),1)[1]
+            end
+
+            result  = normalize(x, z)
+            α̂, β̂, γ̂ = result.parameters 
+            
+            δ[n,it,1] = abs(α-α̂)/α
+            δ[n,it,2] = abs(β-β̂)/β
+            δ[n,it,3] = abs(γ-γ̂)/γ
+        end
+    end
+
+    p = plot(Ns, δ[:,:,1], alpha=0.1, color=:red, label="")
+    plot!(Ns, mean(δ[:,:,1], dims=2), color=:red, label="α deviation")
+
+    plot!(Ns, δ[:,:,2], alpha=0.1, color=:green, label="")
+    plot!(Ns, mean(δ[:,:,2], dims=2), color=:green, label="β deviation")
+
+    plot!(Ns, δ[:,:,3], alpha=0.1, color=:blue, label="")
+    plot!(Ns, mean(δ[:,:,3], dims=2), color=:blue, label="γ deviation")
+
+    xaxis!("number of samples", :log10)
+    yaxis!("% deviation", (0,1))
+
+    savefig("ml_nb_inference_accuracy.png")
+
+    p
 end
 
 end

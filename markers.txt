@@ -1,0 +1,99 @@
+Neural Ectoderm :
+CDH2 [NCAD]
+Nestin
+MycN
+PAX6 - forebrain /spine
+OTX1/2 - forebrain/midbrain
+EMX1/2
+LHX5
+IRX1/2/3
+EN1/2 - midbrain
+GBX2 - hindbrain
+HOXB4 - spinal cord beginning
+
+Non-neural ectoderm
+CDH1 [ECAD]
+TFAP2alpha (TFAP2a)
+Keratin8
+GATA3
+ISL1
+Keratin 19/7/14 [also for NC]
+WNT6
+HSPG2 - defects related
+CLDN3/4/6
+ANXA1
+GRHL2/3
+Rab25 -downstream GRHL2
+
+Neural Crest Markers:
+DLX5/6 [plate border]
+PAX3/7 [plate border]
+Msx2 - neural plate border
+GBX2 - plate border
+SOX10
+SOX5
+Myc
+Id
+Myb
+PAX3
+SOX9
+FOXD3
+HNK1
+SNAIL [EMT -migratory NC]
+SLUG [EMT -migratory NC]
+HAND1
+ANKRD1
+EPAS1
+Dact1
+UTRN
+NR2F1/2
+FOXC1
+NRP2 - migratory NC
+H2AFJ [cranial neural crest - ear]
+CXCL14 [occulary nerual crest]
+ETS1
+Axud1
+Ebf1
+RxrG
+NGFR
+Sip1
+SoxE
+Lmo4
+Th/Dbh/Hand2/Ascl1->NC derived neruons
+Dct/Tyr/Si-> NC derived Meloncytes
+Col2a1/Agc1->Nc derived cartilage
+
+
+Cardiac tissue - potentially derived from neural crest
+Ccbe1 [cardiac neural crest
+MYL7/9 ;  
+ACTC1
+ACTA2
+NPPB
+TMEM88
+
+Placoid
+Six1
+EYA1/2
+HES6
+NEUROG1
+
+Neurons?
+neun
+Tuj1
+STMN2
+CTTNBP2
+hey1
+BCL11a
+CRH
+RUNX1T1
+GABARP
+SOX11
+
+ECM:
+Fibronectin (fn1)
+Flrt3
+LAMA5
+
+Folate metabolim
+MTR

@@ -2,10 +2,13 @@ module DataIO
 
 using Match
 using GZip
+using Printf
 
 using SparseArrays
 
-export read_ply, read_matrix, read_mtx, root
+export root
+export read_ply 
+export read_mtx, read_features, read_barcodes, read_matrix, expand_matrix
 
 # ------------------------------------------------------------------------
 # globals
@@ -197,11 +200,15 @@ function read_mtx(io::IO)
     end
 end
 
+# NOTE: assumes Gene Expression is the only feature type
+read_features(io::IO) = [split(line)[2] in eachline(io)]
+read_barcodes(io::IO) = [line in eachline(io)]
+
 # ------------------------------------------------------------------------
 # scRNAseq file formats
 
-function read_matrix(io::IO; type=Float64, named_cols=false, named_rows=false)
-    cols = named_cols ? readwords(io) : nothing
+function read_matrix(io::IO; type=Float64, named_cols=false, named_rows=false, start_cols=1, start_rows=1)
+    cols = named_cols ? readwords(io)[start_cols:end] : nothing
 
     x = position(io)
     ncols = if named_cols
@@ -229,6 +236,42 @@ function read_matrix(io::IO; type=Float64, named_cols=false, named_rows=false)
     end
 
     return data, rows, cols
+end
+
+function expand_matrix(io::IO, dir::String)
+    if isdir(dir)
+        error("directory exists")
+    end
+    mkdir(dir)
+
+    data, genes, barcodes = read_matrix(io; type=Int, named_cols=true, start_cols=2, named_rows=true)
+
+    open("$dir/barcodes.tsv", "w") do fd
+        write(fd, barcodes[1])
+        for barcode ∈ barcodes[2:end]
+            write(fd, "\n", barcode)
+        end
+    end
+
+    feature(i, gene) = ((@sprintf "Gene%04d" i), "\t", gene, "\t", "Gene Expression") 
+    open("$dir/features.tsv", "w") do fd
+        write(fd, feature(1, genes[1])...)
+        for (i, gene) in enumerate(genes[2:end])
+            write(fd, "\n", feature(i+1, gene)...)
+        end
+    end
+
+    nnz(x) = sum(x[:] .> 0)
+    open("$dir/matrix.mtx", "w") do fd
+        write(fd, "%%MatrixMarket matrix coordinate integer general", "\n")
+        write(fd, "%", "\n")
+        write(fd, string(size(data,1)), " ", string(size(data,2)), " ", string(nnz(data)))
+        for j in 1:size(data,2)
+            for i in findall(data[:,j] .> 0)
+                write(fd, "\n", string(i), " ", string(j), " ", string(data[i,j]))
+            end
+        end
+    end
 end
 
 # ------------------------------------------------------------------------

@@ -12,7 +12,7 @@ include("queue.jl")
 using .PriorityQueue
 
 export distance², distance²!, distance, embed, upper_tri
-export neighborhood, geodesics, mds, isomap
+export neighborhood, geodesics, mds, isomap, scaling
 
 # ------------------------------------------------------------------------
 # globals
@@ -215,9 +215,8 @@ function geodesics(G::Graph; sparse=true)
     if sparse
         adj  = adjacency_list(G)
         dist = zeros(length(G), length(G))
-        # uncomment for parallelism
-        # Threads.@threads
-        for v ∈ 1:length(G)
+
+        @inbounds Threads.@threads for v = 1:length(G)
             dijkstra!(view(dist,:,v), adj, v)
         end
 
@@ -249,6 +248,22 @@ function isomap(x, dₒ; k=12, sparse=true)
     G = neighborhood(x, k)
     D = geodesics(G; sparse=sparse)
     return mds(D.^2, dₒ)
+end
+
+# ------------------------------------------------------------------------
+# dimension estimation
+
+function scaling(D, N)
+	Rₘᵢₙ = minimum(D[D .> 0])
+	Rₘₐₓ = maximum(D)
+	Rs   = range(Rₘᵢₙ,Rₘₐₓ,length=N)
+	
+	ϕ = zeros(size(D,1), N)
+	for (i,R) ∈ enumerate(Rs)
+		ϕ[:,i] = sum(D .<= R, dims=1)
+	end
+	
+	return ϕ, Rs
 end
 
 # ------------------------------------------------------------------------
