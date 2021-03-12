@@ -193,7 +193,6 @@ function read_mtx(io::IO)
             val[i] = parse(T, word[3])
         end
 
-        @show m, n
         sparse(row, col, val, m, n)
     else
         panic("unrecognized data format '$(header[3])'")
@@ -201,8 +200,8 @@ function read_mtx(io::IO)
 end
 
 # NOTE: assumes Gene Expression is the only feature type
-read_features(io::IO) = [split(line)[2] in eachline(io)]
-read_barcodes(io::IO) = [line in eachline(io)]
+read_features(io::IO) = [split(line)[2] for line in eachline(io)]
+read_barcodes(io::IO) = [line for line in eachline(io)]
 
 # ------------------------------------------------------------------------
 # scRNAseq file formats

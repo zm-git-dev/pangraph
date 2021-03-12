@@ -182,7 +182,6 @@ function fit_glm(data; σ¯²=0, μ=1)
     fit = Array{T,1}(undef, size(data,1))
 
     Threads.@threads for i = 1:size(data,1)
-        @show i
         fit[i] = normalize(data[i,:], ḡ; σ¯²=σ¯², β₀=μ)
     end
 
