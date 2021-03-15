@@ -1,6 +1,7 @@
 module scRNA
 
-using Optim
+using Statistics, SpecialFunctions
+using Optim, NLSolversBase
 
 import Base: 
     size, 
@@ -9,7 +10,7 @@ import Base:
     ∪
 
 import LinearAlgebra:
-    svd
+    svd, diag
 
 include("io.jl")
 using .DataIO: read_mtx, read_barcodes, read_features
@@ -25,6 +26,11 @@ export barcodes, genes
 BarcodeFile = "barcodes.tsv"
 FeatureFile = "features.tsv"
 CountMatrix = "matrix.mtx"
+
+const ∞ = Inf
+
+# ------------------------------------------------------------------------
+# utility functions
 
 # ------------------------------------------------------------------------
 # type w/ (de)serialization
@@ -65,7 +71,7 @@ size(seq::Count) = size(seq.data)
 IndexStyle(seq::Count) = IndexCartesian()
 
 # integer indexes
-getindex(seq::Count, I::Vararg{Int,2})    = getindex(seq.data, I...)
+getindex(seq::Count, I::Vararg{Int,2}) = getindex(seq.data, I...)
 getindex(seq::Count, I::AbstractArray{<:Integer}, J) = Count(getindex(seq.data,I,J),seq.gene[I],seq.barcode[J]) 
 getindex(seq::Count, I, J::AbstractArray{<:Integer}) = Count(getindex(seq.data,I,J),seq.gene[I],seq.barcode[J]) 
 getindex(seq::Count, I::AbstractArray{<:Integer}, J::AbstractArray{<:Integer}) = Count(getindex(seq.data,I,J),seq.gene[I],seq.barcode[J]) 
@@ -86,10 +92,25 @@ end
 
 svd(seq::Count) = svd(seq.data)
 
+# -- batch subselection
+
+function batches(seq::Count) 
+    all = map(cells(seq)) do id
+        s = split(id, "/")
+        return length(s) > 1 ? s[1] : nothing
+    end
+    all = filter(!isnothing, all)
+
+    unique!(all)
+    return all
+end
+
+inbatch(seq::Count, batch::AbstractString) = startswith.(cells(seq), batch*"/")
+
 # ------------------------------------------------------------------------
 # creation operators
 
-function scRNAload(dir::AbstractString; prefix="")
+function scRNAload(dir::AbstractString; batch=missing)
     !isdir(dir) && error("directory '$dir' not found")
 
     files = readdir(dir)
@@ -106,7 +127,7 @@ function scRNAload(dir::AbstractString; prefix="")
     length(features) ≠ size(data,1) && error("number of features $(length(features)) ≠ number of rows $(size(counts,1)). check data")
 
     # TODO: accept sparse inputs?
-    prepend = length(prefix) == 0 ? (bc) -> bc : (bc) -> prefix * bc
+    prepend = ismissing(batch) ? (bc) -> bc : (bc) -> batch * "/" * bc
     return Count(Matrix(data),features,map(prepend,barcodes))
 end
 
@@ -162,16 +183,17 @@ end
 # ------------------------------------------------------------------------
 # normalization
 
-function make_loss(x⃗, X₁, X₂, β̄₁, δβ₁¯²)
+function make_loss(x⃗, X₁, X₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²)
 	function f(Θ)
-		α, β₁, β₂, σ = Θ
+		α, β₁, β₂, γ = Θ
 		
 		G₁ = (loggamma(x + γ) - loggamma.(x+1) .- loggamma(γ) for x ∈ x⃗)
-		G₂ = (x*(α+β*g)-(x+γ)*log(exp(α + β₁*x₁ + β₂*x₂) .+ γ) for (x,x₁,x₂) ∈ zip(x⃗,X₁,X₂))
+		G₂ = (x*(α+β₁*x₁+β₂*x₂)-(x+γ)*log(exp(α+β₁*x₁+β₂*x₂) .+ γ) for (x,x₁,x₂) ∈ zip(x⃗,X₁,X₂))
 
-        return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂)) + .5*δβ¯²*(β-β₀)^2
+        return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂)) + 0.5*(δβ₁¯²*(β₁-β̄₁)^2 + δβ₂¯²*(β₂-β̄₂)^2)
 	end
 	
+    # NOTE: gradient & hessian have NOT been updated to reflex the batch-specific gradients
 	function ∂f!(∂Θ, Θ)
 		α, β, γ, σ = Θ
 		
@@ -211,16 +233,19 @@ function make_loss(x⃗, X₁, X₂, β̄₁, δβ₁¯²)
 	return f, ∂f!, ∂²f!
 end
 
+# TODO: allow for 3 OR 4 parameters depending on if different batches are detected
+#       for now we have hardcoded in batch behavior
+
 # input parameters are:
 # x  => vector of genes to fit
 # ḡ₁ => average gene expression for given cell
 # ḡ₂ => average gene expression for given batch
-function fit(x, ḡ₁, ḡ₂; β̄₁=1, δβ₁¯²=0, check_grad=false)
+function fit(x, ḡ₁, ḡ₂; β̄₁=1, δβ₁¯²=0, β̄₂=0, δβ₂¯²=0, check_grad=false)
 	μ  = mean(x)
 	Θ₀ = [
 		log(μ),
-		β₀,
-        0,
+		β̄₁,
+        β̄₂,
 		μ^2 / (var(x)-μ),
 	]
 	
@@ -229,17 +254,17 @@ function fit(x, ḡ₁, ḡ₂; β̄₁=1, δβ₁¯²=0, check_grad=false)
 	end
 	
 	loss = check_grad ? TwiceDifferentiable(
-		make_loss(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯²)[1],
+		make_loss(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²)[1],
 		Θ₀;
 		autodiff=:forward
 	) : TwiceDifferentiable(
-		make_loss(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯²)...,
+		make_loss(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²)...,
 		Θ₀
 	)
 	
 	if check_grad && false
 		f, ∂f!, ∂²f! = make_loss(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯²)
-		∂, ∂² = zeros(3), zeros(3,3)
+		∂, ∂² = zeros(4), zeros(4,4)
 
 		∂f!(∂,Θ₀)
 		∂²f!(∂²,Θ₀)
@@ -252,8 +277,8 @@ function fit(x, ḡ₁, ḡ₂; β̄₁=1, δβ₁¯²=0, check_grad=false)
 	end
 
 	constraint = TwiceDifferentiableConstraints(
-		[-Inf, -Inf, 0],
-		[+Inf, +Inf, +Inf],
+		[-∞, -∞, -∞, 0],
+		[+∞, +∞, +∞, +∞],
 	)
 
 	soln = optimize(loss, constraint, Θ₀, IPNewton())
@@ -281,7 +306,21 @@ end
 # input parameters are:
 # β̄₁    => mean of prior on β₁ (cell-specific count)
 # δβ₁¯² => uncertainty of prior on β₁ (cell-specific count)
-function normalize(seq::Count; β̄₁=1, δβ₁¯²=0)
+function normalize(seq::Count; β̄₁=1, δβ₁¯²=0, β̄₂=0, δβ₂¯²=0)
+    ḡ₁ = vec(mean(seq, dims=1))
+    ḡ₂ = zeros(ncells(seq))
+
+    for b ∈ batches(seq)
+        ι      = inbatch(seq, b)
+        ḡ₂[ι] .= mean(seq[:,ι][:])
+    end
+
+    ḡ₁ = log.(ḡ₁)
+    ḡ₂ = log.(ḡ₂)
+
+    r = [fit(vec(seq.data[i,:]), ḡ₁, ḡ₂; β̄₁=β̄₁, δβ₁¯²=δβ₁¯², β̄₂=β̄₂, δβ₂¯²=δβ₂¯², check_grad=true) for i ∈ 1:4000]
+
+    return r, vec(mean(seq, dims=2))[1:length(r)]
 end
 
 # ------------------------------------------------------------------------
@@ -292,9 +331,9 @@ const SEQ2 = "/home/nolln/root/data/seqspace/raw/rep5"
 const SEQ3 = "/home/nolln/root/data/seqspace/raw/rep6"
 
 function test()
-    seq₁ = scRNAload(SEQ1; prefix="rep4/")
-    seq₂ = scRNAload(SEQ2; prefix="rep5/")
-    #seq₃ = scRNAload(SEQ2; prefix="rep6/")
+    seq₁ = scRNAload(SEQ1; batch="rep4")
+    seq₂ = scRNAload(SEQ2; batch="rep5")
+    seq₃ = scRNAload(SEQ2; batch="rep6")
 
     seq = seq₁ ∪ seq₂
 
@@ -308,7 +347,7 @@ function test()
     end
     @show size(seq)
 
-    return seq
+    return normalize(seq; δβ₁¯²=1e-2, δβ₂¯²=1e-2)
 end
 
 end
