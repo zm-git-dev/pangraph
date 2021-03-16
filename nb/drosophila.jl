@@ -151,7 +151,7 @@ simple = DataFilter.genes(raw; min=CUTOFF);
 size(simple)
 
 # ╔═╡ a37e0e60-81f9-11eb-2863-91bd4e2eef8b
-fits = DataFilter.fit_glm(simple;σ¯²=1e-2, μ=0.5)
+fits = DataFilter.fit_glm(simple;σ¯²=1e-2, μ=1.0)
 
 # ╔═╡ f0f1f23a-81f9-11eb-119b-7b0796efcddf
 begin
@@ -219,7 +219,7 @@ let p
 		alpha=0.1, 
 		xscale=:log10, 
 		label="", 
-		ylims=(0,2.5), 
+		ylims=(0.5,1.5), 
 		xlabel="average count/cell", 
 		ylabel="estimated β", 
 		colorbar_title="log uncertainty"
@@ -311,6 +311,18 @@ end
 # ╔═╡ 27f7e770-81fb-11eb-25df-031089c32b6d
 genes = gene_names(); index = Dict(gene=>i for (i,gene) in enumerate(genes))
 
+# ╔═╡ 25422052-85ea-11eb-0682-4b20ec3d469d
+begin
+	dvir_markers = map(genes) do g
+		occursin("Dvir_", g)
+	end
+		
+	notdvir = vec(sum(scrna[dvir_markers,:], dims=1) ./ sum(scrna, dims=1))
+end
+
+# ╔═╡ 2e46507c-85ea-11eb-19d8-2d852be3eeaa
+plot(sort(notdvir), range(0,1,length=length(notdvir)))
+
 # ╔═╡ 1f6e008c-8215-11eb-0a43-cb3b28e76b13
 let genes, p
 	genes = open("$DATA/features.tsv") do io
@@ -330,9 +342,6 @@ let genes, p
 	end
 	p
 end
-
-# ╔═╡ e585ae0e-81fa-11eb-0ded-f388a80a268f
-plot(sort(N[index["eve"],:]), range(0,1,length=size(N,2)))
 
 # ╔═╡ 127bdc52-81fc-11eb-0edd-057847c839c9
 F = svd(N)
@@ -379,6 +388,12 @@ end
 
 # ╔═╡ b7419f9c-81fc-11eb-1f7c-c1d8ae3f04da
 dₑ = 35; Ñ = F.U[:,1:dₑ] * Diagonal(F.S[1:dₑ]) * F.Vt[1:dₑ,:]; cor(Ñ[:], N[:])
+
+# ╔═╡ e585ae0e-81fa-11eb-0ded-f388a80a268f
+plot(sort(Ñ[index["hb"],:]), range(0,1,length=size(N,2)))
+
+# ╔═╡ f162493a-85f6-11eb-367d-dfc988eff78b
+scatter(N[index["hb"],:], Ñ[index["hb"],:])
 
 # ╔═╡ b022e50e-81fc-11eb-2c8e-2f3e7a1071c3
 g̃ = PointCloud.geodesics(Ñ,10);
@@ -442,6 +457,20 @@ end
 # ╔═╡ a07cc6f0-827a-11eb-3500-0b465b1ed0ab
 Φ, embryo, database, match = Inference.inversion(N, genes;ν=ν,ω=ω);
 
+# ╔═╡ 62d05d6e-85f7-11eb-1182-a1666eafff03
+let genes
+	genes = open("$DATA/features.tsv") do io
+		[split(line)[2] for line in eachline(io)]
+	end
+	db_genes = Set(keys(database.gene))
+	db_markers = map(genes) do g
+		g ∈ db_genes
+	end
+	
+	db_sum = vec(sum(scrna[db_markers,:], dims=1))
+	plot(sort(db_sum.+1),range(0,1,length=length(db_sum)), xscale=:log10)
+end
+
 # ╔═╡ 31895884-827b-11eb-1edc-cd61ebd542c0
 begin
 	Ψ  = Φ(0.1)
@@ -498,7 +527,7 @@ begin
 end
 
 # ╔═╡ 47cffa4e-81fe-11eb-2068-39fbcc00e07c
-GENE = "pgc"
+GENE = "eve"
 
 # ╔═╡ 3ce1b582-81fe-11eb-3840-f389f69bfc37
 @bind THETA PlutoUI.Slider(range(-90,180,length=100))
@@ -510,8 +539,9 @@ GENE = "pgc"
 begin
 	PyPlot.clf()
 	PyPlot.scatter3D(ξ[:,1], ξ[:,2],ξ[:,3],
-		c=vec(Ñ[index[GENE],:]),
+		c=vec(N[index[GENE],:]),
 		cmap="inferno",
+		alpha=0.5,
 	)
 	PyPlot.view_init(THETA,PHI)
 	if false
@@ -522,9 +552,9 @@ end
 
 # ╔═╡ 6b1a9a24-8201-11eb-2c4a-556b92432815
 begin
-	c1 = [corspearman(ξ[:,1], Ñ[i,:]) for i in 1:size(Ñ,1)]
-	c2 = [corspearman(ξ[:,2], Ñ[i,:]) for i in 1:size(Ñ,1)]
-	c3 = [corspearman(ξ[:,3], Ñ[i,:]) for i in 1:size(Ñ,1)]
+	c1 = [corspearman(ξ[:,1], N[i,:]) for i in 1:size(Ñ,1)]
+	c2 = [corspearman(ξ[:,2], N[i,:]) for i in 1:size(Ñ,1)]
+	c3 = [corspearman(ξ[:,3], N[i,:]) for i in 1:size(Ñ,1)]
 end
 
 # ╔═╡ 90fcec56-8201-11eb-3c40-c735ca7cfe5a
@@ -535,13 +565,13 @@ begin
 end
 
 # ╔═╡ 88378d26-820e-11eb-3425-75ba2afb55b2
-genes[SP1[end-50:end]]
+genes[SP1[1:50]]
 
 # ╔═╡ 6ce4b132-821a-11eb-304b-bde9e2282434
-genes[SP2[end-50:end]]
+genes[SP2[1:end]]
 
 # ╔═╡ 6e4b9b1c-821a-11eb-26ca-5fa1b704de20
-genes[SP3[end-50:end]]
+genes[SP3[1:50]]
 
 # ╔═╡ 2f8e5b88-8280-11eb-01de-591fcb6b2cda
 @bind THETA2 PlutoUI.Slider(range(-90,90,length=100))
@@ -552,8 +582,11 @@ genes[SP3[end-50:end]]
 # ╔═╡ 120cc5a0-8365-11eb-2de3-31359c0fea1b
 database.gene
 
+# ╔═╡ 5a29a83e-85f7-11eb-1378-43e80893b73a
+length(keys(database.gene))
+
 # ╔═╡ 54f55324-8280-11eb-00d1-bbeb7b05501e
-GENE2 = "zen"
+GENE2 = "run"
 
 # ╔═╡ 38ff1874-8280-11eb-1846-a3db7627e4b5
 begin
@@ -569,6 +602,9 @@ begin
 	PyPlot.gcf()
 end
 
+# ╔═╡ 53e6cc0c-85f7-11eb-0000-714188d3bb57
+
+
 # ╔═╡ Cell order:
 # ╠═3bfe8b4c-81f2-11eb-122d-bd6d98d3dc4f
 # ╟─28d30d2c-81f2-11eb-3c67-a7383ad853de
@@ -582,10 +618,13 @@ end
 # ╟─ab58264c-81f2-11eb-146c-ab082b41c4bb
 # ╟─0fb03c38-81f3-11eb-19f3-4951c52e759a
 # ╟─1ee0ba70-81f3-11eb-1f36-d5ce11db0701
-# ╟─bc9dd25c-81f8-11eb-3ed6-cd12b63976d3
+# ╠═bc9dd25c-81f8-11eb-3ed6-cd12b63976d3
 # ╠═1c645a06-81f4-11eb-321f-ff025c62a777
 # ╠═56a9e004-81f5-11eb-219c-cfe55c815269
 # ╠═d5091a98-81ff-11eb-143c-d120eafda3de
+# ╠═25422052-85ea-11eb-0682-4b20ec3d469d
+# ╠═2e46507c-85ea-11eb-19d8-2d852be3eeaa
+# ╠═62d05d6e-85f7-11eb-1182-a1666eafff03
 # ╠═e0663e36-8207-11eb-3307-59786cc96054
 # ╟─37f75734-81f4-11eb-00fc-55a5d52fd30a
 # ╠═84c32904-81f8-11eb-38c5-8bf8ff24a47d
@@ -597,18 +636,19 @@ end
 # ╠═2cb9cb86-81f9-11eb-185f-dde76238f4cf
 # ╠═8eca5386-81f9-11eb-1b0a-256e1d04ff31
 # ╠═a37e0e60-81f9-11eb-2863-91bd4e2eef8b
-# ╟─f0f1f23a-81f9-11eb-119b-7b0796efcddf
+# ╠═f0f1f23a-81f9-11eb-119b-7b0796efcddf
 # ╟─fdbc491e-81f9-11eb-0651-abd1056d8d51
 # ╟─194456ba-81fa-11eb-3780-4f6551e15330
 # ╠═34510a5a-81fa-11eb-2417-8f9d8618004a
-# ╟─8a7b7ec4-81fa-11eb-0cdc-71d9dabdafd3
+# ╠═8a7b7ec4-81fa-11eb-0cdc-71d9dabdafd3
 # ╟─717a8444-81fa-11eb-28e0-019fbe333fe4
 # ╠═bb8a7b2a-81fa-11eb-369d-09e6281405c3
-# ╟─a3961952-81fa-11eb-1ee0-0b99b18ed929
+# ╠═a3961952-81fa-11eb-1ee0-0b99b18ed929
 # ╟─e7e5b284-81fa-11eb-3077-c710544971a4
 # ╠═27f7e770-81fb-11eb-25df-031089c32b6d
 # ╠═c915b6c4-81fa-11eb-0a73-9d5729670289
 # ╠═e585ae0e-81fa-11eb-0ded-f388a80a268f
+# ╠═f162493a-85f6-11eb-367d-dfc988eff78b
 # ╠═127bdc52-81fc-11eb-0edd-057847c839c9
 # ╟─1824cfc4-81fc-11eb-016c-359492ff8bf0
 # ╟─861ca236-81fc-11eb-13a7-876888768422
@@ -642,5 +682,7 @@ end
 # ╠═2f8e5b88-8280-11eb-01de-591fcb6b2cda
 # ╠═34d54e58-8280-11eb-1483-0179574a1c96
 # ╠═120cc5a0-8365-11eb-2de3-31359c0fea1b
+# ╠═5a29a83e-85f7-11eb-1378-43e80893b73a
 # ╠═54f55324-8280-11eb-00d1-bbeb7b05501e
 # ╠═38ff1874-8280-11eb-1846-a3db7627e4b5
+# ╠═53e6cc0c-85f7-11eb-0000-714188d3bb57

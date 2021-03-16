@@ -178,7 +178,7 @@ function fit_glm(data; σ¯²=0, μ=1)
         }
     }
 
-    ḡ   = vec(mean(data, dims=1))
+    ḡ   = log.(vec(mean(data, dims=1)))
     fit = Array{T,1}(undef, size(data,1))
 
     Threads.@threads for i = 1:size(data,1)
