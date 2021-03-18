@@ -473,7 +473,7 @@ end
 
 # ╔═╡ 31895884-827b-11eb-1edc-cd61ebd542c0
 begin
-	Ψ  = Φ(0.1)
+	Ψ  = Φ(0.2)
 	Ψₗ = Ψ  ./ sum(Ψ,dims=2)
 	Ψᵣ = (Ψ ./ sum(Ψ,dims=1))'
 	
@@ -585,14 +585,17 @@ database.gene
 # ╔═╡ 5a29a83e-85f7-11eb-1378-43e80893b73a
 length(keys(database.gene))
 
+# ╔═╡ 825af6b4-8820-11eb-2d80-3f7e33a2d5fd
+genes[occursin.("Rp", genes)]
+
 # ╔═╡ 54f55324-8280-11eb-00d1-bbeb7b05501e
-GENE2 = "run"
+GENE2 = "hb"
 
 # ╔═╡ 38ff1874-8280-11eb-1846-a3db7627e4b5
 begin
 	PyPlot.clf()
 	PyPlot.scatter3D(embryo[:,1], embryo[:,2], embryo[:,3],
-		c=vec(G[index[GENE2],:]),
+		c=sum(vec(G[index[gg],:]) for gg in genes[occursin.("hb", genes)]),
 		cmap="inferno",
 	)
 	PyPlot.view_init(THETA2,PHI2)
@@ -654,7 +657,7 @@ end
 # ╟─861ca236-81fc-11eb-13a7-876888768422
 # ╠═5c11af0c-81fc-11eb-2472-2b6c20a6d55f
 # ╠═6043d57a-81fc-11eb-32c7-0525d51e5778
-# ╟─67490a68-81fc-11eb-1129-cb55a12f604e
+# ╠═67490a68-81fc-11eb-1129-cb55a12f604e
 # ╠═b7419f9c-81fc-11eb-1f7c-c1d8ae3f04da
 # ╠═b022e50e-81fc-11eb-2c8e-2f3e7a1071c3
 # ╠═e72b9ec4-81fc-11eb-06b5-0fcb2ef4b338
@@ -683,6 +686,7 @@ end
 # ╠═34d54e58-8280-11eb-1483-0179574a1c96
 # ╠═120cc5a0-8365-11eb-2de3-31359c0fea1b
 # ╠═5a29a83e-85f7-11eb-1378-43e80893b73a
+# ╠═825af6b4-8820-11eb-2d80-3f7e33a2d5fd
 # ╠═54f55324-8280-11eb-00d1-bbeb7b05501e
 # ╠═38ff1874-8280-11eb-1846-a3db7627e4b5
 # ╠═53e6cc0c-85f7-11eb-0000-714188d3bb57

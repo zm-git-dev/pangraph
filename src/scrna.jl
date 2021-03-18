@@ -1,5 +1,7 @@
 module scRNA
 
+using PyCall
+using Interpolations
 using Statistics, SpecialFunctions
 using Optim, NLSolversBase, ForwardDiff
 
@@ -34,6 +36,7 @@ const FitType = NamedTuple{
             :uncertainty, 
             :likelihood, 
             :trend, 
+            :cdf,
             :residuals
         ),
         Tuple{
@@ -41,14 +44,49 @@ const FitType = NamedTuple{
             Array{Float64,1},
             Float64,
             Array{Float64,1},
+            Array{Float64,1},
             Array{Float64,1}
         }
 }
 
+sf = pyimport("scipy.special")
+
 # ------------------------------------------------------------------------
 # utility functions
 
-barcode(name) = join(split(name,"/")[2:end], "/")
+barcode(name) = occursin("/",name) ? join(split(name,"/")[2:end], "/") : name
+
+function trendline(x, y, n)
+    l,r = log(minimum(x)), log(maximum(x))
+    bp  = range(l, r, length=n+1)
+    x₀  = Array{eltype(x),1}(undef, n)
+    μ   = Array{eltype(y),1}(undef, n)
+    for i ∈ 1:n
+        xₗ, xᵣ = exp(bp[i]), exp(bp[i+1])
+        pts = y[xₗ .≤ x .≤ xᵣ]
+        if length(pts) > 0
+            μ[i] = exp.(mean(log.(pts)))
+        else
+            μ[i] = μ[i-1]
+        end
+        x₀[i] = 0.5*(xₗ + xᵣ)
+    end
+
+    x₀ = [exp(l); x₀; exp(r)]
+    μ  = [y[argmin(x)]; μ; y[argmax(x)]]
+    return extrapolate(
+        interpolate((x₀,), μ, Gridded(Linear())), 
+        Line()
+    )
+end
+
+function clamp!(x, lo, hi)
+    x[x .< lo] .= lo
+    x[x .> hi] .= hi
+    x
+end
+
+betainc(a,b,x) = sf.betainc(a,b,x)
 
 # ------------------------------------------------------------------------
 # type w/ (de)serialization
@@ -170,7 +208,7 @@ end
 
 inbatch(seq::Count, batch::AbstractString) = startswith.(cells(seq), batch*"/")
 
-# -- cell subselection
+# -- gene subselection
 
 locus(seq::Count, genes::AbstractString...)    = filter((i)->!isnothing(i), [findfirst(seq.gene .== g) for g in genes])
 searchloci(seq::Count, prefix::AbstractString) = occursin.(prefix, seq.gene)
@@ -301,6 +339,56 @@ function make_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
 	return f, ∂f!, ∂²f!
 end
 
+function make_loss2(x⃗, ḡ, β̄::Float64, δβ¯²::Float64, γ̄::Float64, δγ¯²::Float64)
+	function f(Θ)
+		α, β, γ = Θ
+		
+		G₁ = (loggamma(x+γ) - loggamma(x+1) - loggamma(γ) for x ∈ x⃗)
+		G₂ = (x*(α + β*g)-(x+γ)*log(exp(α+β*g) + γ) for (x,g) ∈ zip(x⃗,ḡ))
+
+        return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂)) + 0.5*δβ¯²*(β-β̄)^2 + 0.5*δγ¯²*(γ-γ̄)^2
+	end
+	
+	function ∂f!(∂Θ, Θ)
+		α, β, γ = Θ
+		
+		Mu 	 = (exp(+α + β*g) for g ∈ ḡ)
+		Mu¯¹ = (exp(-α - β*g) for g ∈ ḡ)
+
+		G₁ = (x-((γ+x)/(1+γ*μ¯¹)) for (x,μ¯¹) ∈ zip(x⃗,Mu¯¹))
+		G₂ = (digamma(x+γ)-digamma(γ)+log(γ)+1-log(γ+μ)-(x+γ)/(γ+μ) for (x,μ) ∈ zip(x⃗,Mu))
+
+		∂Θ[1] = -mean(G₁)
+        ∂Θ[2] = -mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ)) + δβ¯²*(β-β̄)
+		∂Θ[3] = -mean(G₂) + δγ¯²*(γ-γ̄)
+	end
+	
+	function ∂²f!(∂²Θ, Θ)
+		α, β, γ = Θ
+		
+		Mu 	 = (exp(+α + β*g) for g ∈ ḡ)
+		Mu¯¹ = (exp(-α - β*g) for g ∈ ḡ)
+
+		G₁ = (γ*μ¯¹*(γ+x)/(1+γ*μ¯¹).^2 for (x,μ¯¹) ∈ zip(x⃗,Mu¯¹))
+		G₂ = (μ+γ for μ ∈ Mu)
+		G₃ = (μ*((γ+x)/g₂^2 - 1/g₂ ) for (x,μ,g₂) ∈ zip(x⃗,Mu,G₂))
+		G₄ = (trigamma(x+γ)-trigamma(γ)+1/γ-2/g₂+(γ+x)/g₂^2 for (x,g₂) ∈ zip(x⃗,G₂))
+
+		# α,β submatrix
+		∂²Θ[1,1] = mean(G₁)
+		∂²Θ[1,2] = ∂²Θ[2,1] = mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ))
+		∂²Θ[2,2] = mean(g₁*g^2 for (g₁,g) ∈ zip(G₁,ḡ)) + δβ¯²
+		
+		# γ row/column
+		∂²Θ[3,3] = -mean(G₄)
+		∂²Θ[3,1] = ∂²Θ[1,3] = -mean(G₃)
+		∂²Θ[3,2] = ∂²Θ[2,3] = -mean(g₃*g for (g₃, g) ∈ zip(G₃,ḡ)) + δγ¯²
+	end
+	
+	return f, ∂f!, ∂²f!
+end
+
+
 function make_loss(x⃗, ḡ₁, ḡ₂, β̄₁::Float64, δβ₁¯²::Float64, β̄₂::Float64, δβ₂¯²::Float64)
 	function f(Θ)
 		α, β₁, β₂, γ = Θ
@@ -358,6 +446,11 @@ function fit(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²)::Fit
 	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
 	ρ = (x .- μ̂) ./ σ̂
 
+    p = μ̂./(μ̂.+γ̂)
+    p[p .< 0] .= 0
+    p[p .> 1] .= 1
+
+    Φ = [1-betainc(k.+1.0,a,b) for (k,a,b) ∈ zip(x,γ̂,p)]
     # studentized
     # W = Diagonal(μ̂)
     # H = (.√(W)*x)*inv(x'*W*x)*(.√(W)*x)'
@@ -369,6 +462,7 @@ function fit(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²)::Fit
 		uncertainty=δΘ̂, 
 		likelihood=Ê,
 		trend=μ̂,
+        cdf=Φ,
 		residuals=ρ,
 	)
 end
@@ -408,12 +502,69 @@ function fit(x, ḡ, β̄::Float64, δβ¯²::Float64)::FitType
 	μ̂ = exp.(α̂ .+ β̂*ḡ)
 	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
 	ρ = (x .- μ̂) ./ σ̂
-	
+
+    # quantiles
+    p = μ̂./(μ̂.+γ̂)
+    p[p .< 0] .= 0
+    p[p .> 1] .= 1
+
+    Φ = [1-betainc(k.+1.0,a,b) for (k,a,b) ∈ zip(x,γ̂,p)]
 	return (
 		parameters=Θ̂, 
 		uncertainty=δΘ̂, 
 		likelihood=Ê,
 		trend=μ̂,
+        cdf=Φ,
+		residuals=ρ,
+	)
+end
+
+function fit2(x, ḡ, β̄::Float64, δβ¯²::Float64, γ̄::Float64, δγ¯²::Float64)::FitType
+	μ  = mean(x)
+	Θ₀ = [
+		log(μ),
+		β̄,
+		μ^2 / (var(x)-μ),
+	]
+	
+    if Θ₀[end] < 0 || isinf(Θ₀[end])
+        Θ₀[end] = 1
+	end
+
+	loss = TwiceDifferentiable(
+        make_loss2(x, ḡ, β̄, δβ¯², γ̄, δγ¯²)[1],
+		Θ₀;
+        autodiff=:forward
+	)
+	
+	constraint = TwiceDifferentiableConstraints(
+		[-Inf, -Inf, 0],
+		[+Inf, +Inf, +Inf],
+	)
+
+	soln = optimize(loss, constraint, Θ₀, IPNewton())
+	
+	Θ̂  = Optim.minimizer(soln)
+	Ê  = Optim.minimum(soln)
+	δΘ̂ = diag(inv(hessian!(loss, Θ̂)))
+	
+	# pearson residuals
+	α̂, β̂, γ̂ = Θ̂
+	μ̂ = exp.(α̂ .+ β̂*ḡ)
+	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
+	ρ = (x .- μ̂) ./ σ̂
+
+    p = μ̂./(μ̂.+γ̂)
+    p[p .< 0] .= 0
+    p[p .> 1] .= 1
+
+    Φ = [1-betainc(k.+1.0,a,b) for (k,a,b) ∈ zip(x,γ̂,p)]
+	return (
+		parameters=Θ̂, 
+		uncertainty=δΘ̂, 
+		likelihood=Ê,
+		trend=μ̂,
+        cdf=Φ,
 		residuals=ρ,
 	)
 end
@@ -437,6 +588,7 @@ function normalize(seq::Count; β̄₁=1.0, δβ₁¯²=0.0, β̄₂=0.0, δβ�
     ḡ₁ = log.(ḡ₁)
     ḡ₂ = batched ? log.(ḡ₂) : nothing
 
+    # step 1: obtain trend lines
     fits = Array{FitType,1}(undef, ngenes(seq))
 
     if !batched
@@ -449,7 +601,16 @@ function normalize(seq::Count; β̄₁=1.0, δβ₁¯²=0.0, β̄₂=0.0, δβ�
         end
     end
 
-    return Count(vcat((fit.residuals' for fit ∈ fits)...), seq.gene, seq.cell),
+    # TODO: more?
+    χ = vec(mean(seq,dims=2))
+    γ̂ = batched ? map((f)->f.parameters[4],  fits) : map((f)->f.parameters[3],  fits)
+    Γ = trendline(χ, γ̂, 10)
+
+    Threads.@threads for i ∈ 1:ngenes(seq)
+        fits[i] = fit2(vec(seq.data[i,:]), ḡ₁, β̄₁, δβ₁¯², Γ(χ[i]), 1e-2)
+    end
+
+    return Count(clamp!(vcat((fit.residuals' for fit ∈ fits)...),-10,10), seq.gene, seq.cell),
         (
             likelihood  = map((f)->f.likelihood,  fits),
             α   = map((f)->f.parameters[1],  fits),
@@ -461,7 +622,10 @@ function normalize(seq::Count; β̄₁=1.0, δβ₁¯²=0.0, β̄₂=0.0, δβ�
             δβ₂ = batched ? map((f)->f.uncertainty[3], fits) : nothing,
             δγ  = batched ? map((f)->f.uncertainty[4], fits) : map((f)->f.uncertainty[3], fits),
 
-            μ̂  = map((f)->f.trend,  fits),
+            μ̂   = map((f)->f.trend,  fits),
+            raw = [vec(seq.data[i,:]) for i in 1:size(seq.data,1)],
+            cdf = map((f)->f.cdf),
+
             χ  = vec(mean(seq, dims=2)),
             M  = vec(maximum(seq, dims=2)))
 end
@@ -507,9 +671,10 @@ process(seq) = begin
 end
 
 function test()
-    seq = reduce(∪, process(scRNAload("$ROOT/rep$r"; batch="rep$r")) for r ∈ [1,2,3,4,5,6,7])
+    # seq = reduce(∪, process(scRNAload("$ROOT/rep$r"; batch="rep$r")) for r ∈ [1,2,3,4,5,6,7])
+    seq = reduce(∪, process(scRNAload("$ROOT/rep$r")) for r ∈ [1,2,3,4,5,6,7])
     seq = filtergene(seq) do gene, _
-        sum(gene) >= 5e-3*length(gene) && maximum(gene) > 1
+        sum(gene) >= 1e-2*length(gene) && maximum(gene) > 1
     end
 
     return normalize(seq; β̄₁=1.0, δβ₁¯²=1.0, β̄₂=0.0, δβ₂¯²=1.0)
