@@ -573,7 +573,7 @@ end
 # input parameters are:
 # β̄₁    => mean of prior on β₁ (cell-specific count)
 # δβ₁¯² => uncertainty of prior on β₁ (cell-specific count)
-function normalize(seq::Count; β̄₁=1.0, δβ₁¯²=0.0, β̄₂=0.0, δβ₂¯²=0.0)
+function normalize(seq::Count; β̄₁=1.0, δβ₁¯²=0.0)
     ḡ₁ = vec(mean(seq, dims=1))
     ḡ₂ = zeros(ncells(seq))
 
@@ -677,7 +677,7 @@ function test()
         sum(gene) >= 1e-2*length(gene) && maximum(gene) > 1
     end
 
-    return normalize(seq; β̄₁=1.0, δβ₁¯²=1.0, β̄₂=0.0, δβ₂¯²=1.0)
+    return normalize(seq; β̄₁=1.0, δβ₁¯²=1.0)
 
     # NOTE: This is kept for posterity! This is the normalization of DVEX paper
     #       They divide out by the column sum and scale by maximum cell depth
