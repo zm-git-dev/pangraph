@@ -1,9 +1,11 @@
 module scRNA
 
+using GSL
+using Statistics, StatsBase, Distributions
+using SpecialFunctions, Interpolations
+
 using PyCall
-using Interpolations
-using Statistics, SpecialFunctions
-using Optim, NLSolversBase, ForwardDiff
+using NMF, Optim, NLSolversBase, ForwardDiff
 
 import Base: 
     size, 
@@ -49,7 +51,7 @@ const FitType = NamedTuple{
         }
 }
 
-sf = pyimport("scipy.special")
+const NMF = pyimport("sklearn.decomposition").NMF
 
 # ------------------------------------------------------------------------
 # utility functions
@@ -86,7 +88,8 @@ function clamp!(x, lo, hi)
     x
 end
 
-betainc(a,b,x) = sf.betainc(a,b,x)
+betainc(a,b,x) = GSL.sf_beta_inc(a,b,x)
+gammainc(a,x)  = GSL.sf_gamma_inc_P(a,x)
 
 # ------------------------------------------------------------------------
 # type w/ (de)serialization
@@ -216,7 +219,7 @@ searchloci(seq::Count, prefix::AbstractString) = occursin.(prefix, seq.gene)
 # ------------------------------------------------------------------------
 # creation operators
 
-function scRNAload(dir::AbstractString; batch=missing)
+function load(dir::AbstractString; batch=missing)
     !isdir(dir) && error("directory '$dir' not found")
 
     files = readdir(dir)
@@ -289,8 +292,21 @@ end
 # ------------------------------------------------------------------------
 # normalization
 
-# no batching
-function make_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
+function negbinom1_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
+	function f(Θ)
+		α, β, γ = Θ
+		
+		Mu = (exp(+α + β*g) for g ∈ ḡ)
+        G₁ = (loggamma(x+γ*μ) - loggamma(x+1) - loggamma(γ*μ) for (x,μ) ∈ zip(x⃗,Mu))
+        G₂ = (x*log(γ) - (x+γ*μ)*log(1+γ) for (x,μ) ∈ zip(x⃗,Mu) )
+
+        return -mean(g₁+g₂ for (g₁,g₂) ∈ zip(G₁,G₂)) + 0.5*δβ¯²*(β-β̄)^2
+	end
+	
+	return f
+end
+
+function negbinom2_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
 	function f(Θ)
 		α, β, γ = Θ
 		
@@ -339,64 +355,14 @@ function make_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
 	return f, ∂f!, ∂²f!
 end
 
-function make_loss2(x⃗, ḡ, β̄::Float64, δβ¯²::Float64, γ̄::Float64, δγ¯²::Float64)
+function gamma_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
 	function f(Θ)
 		α, β, γ = Θ
 		
-		G₁ = (loggamma(x+γ) - loggamma(x+1) - loggamma(γ) for x ∈ x⃗)
-		G₂ = (x*(α + β*g)-(x+γ)*log(exp(α+β*g) + γ) for (x,g) ∈ zip(x⃗,ḡ))
+        M = (exp(α+β*g) for g ∈ ḡ)
+        Z = (loggamma(μ/γ)+(μ/γ)*log(γ) for μ ∈ M)  
 
-        return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂)) + 0.5*δβ¯²*(β-β̄)^2 + 0.5*δγ¯²*(γ-γ̄)^2
-	end
-	
-	function ∂f!(∂Θ, Θ)
-		α, β, γ = Θ
-		
-		Mu 	 = (exp(+α + β*g) for g ∈ ḡ)
-		Mu¯¹ = (exp(-α - β*g) for g ∈ ḡ)
-
-		G₁ = (x-((γ+x)/(1+γ*μ¯¹)) for (x,μ¯¹) ∈ zip(x⃗,Mu¯¹))
-		G₂ = (digamma(x+γ)-digamma(γ)+log(γ)+1-log(γ+μ)-(x+γ)/(γ+μ) for (x,μ) ∈ zip(x⃗,Mu))
-
-		∂Θ[1] = -mean(G₁)
-        ∂Θ[2] = -mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ)) + δβ¯²*(β-β̄)
-		∂Θ[3] = -mean(G₂) + δγ¯²*(γ-γ̄)
-	end
-	
-	function ∂²f!(∂²Θ, Θ)
-		α, β, γ = Θ
-		
-		Mu 	 = (exp(+α + β*g) for g ∈ ḡ)
-		Mu¯¹ = (exp(-α - β*g) for g ∈ ḡ)
-
-		G₁ = (γ*μ¯¹*(γ+x)/(1+γ*μ¯¹).^2 for (x,μ¯¹) ∈ zip(x⃗,Mu¯¹))
-		G₂ = (μ+γ for μ ∈ Mu)
-		G₃ = (μ*((γ+x)/g₂^2 - 1/g₂ ) for (x,μ,g₂) ∈ zip(x⃗,Mu,G₂))
-		G₄ = (trigamma(x+γ)-trigamma(γ)+1/γ-2/g₂+(γ+x)/g₂^2 for (x,g₂) ∈ zip(x⃗,G₂))
-
-		# α,β submatrix
-		∂²Θ[1,1] = mean(G₁)
-		∂²Θ[1,2] = ∂²Θ[2,1] = mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ))
-		∂²Θ[2,2] = mean(g₁*g^2 for (g₁,g) ∈ zip(G₁,ḡ)) + δβ¯²
-		
-		# γ row/column
-		∂²Θ[3,3] = -mean(G₄)
-		∂²Θ[3,1] = ∂²Θ[1,3] = -mean(G₃)
-		∂²Θ[3,2] = ∂²Θ[2,3] = -mean(g₃*g for (g₃, g) ∈ zip(G₃,ḡ)) + δγ¯²
-	end
-	
-	return f, ∂f!, ∂²f!
-end
-
-
-function make_loss(x⃗, ḡ₁, ḡ₂, β̄₁::Float64, δβ₁¯²::Float64, β̄₂::Float64, δβ₂¯²::Float64)
-	function f(Θ)
-		α, β₁, β₂, γ = Θ
-		
-		G₁ = (loggamma(x + γ) - loggamma.(x+1) .- loggamma(γ) for x ∈ x⃗)
-		G₂ = (x*(α+β₁*g₁+β₂*g₂)-(x+γ)*log(exp(α+β₁*g₁+β₂*g₂) .+ γ) for (x,g₁,g₂) ∈ zip(x⃗,ḡ₁,ḡ₂))
-
-        return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂)) + 0.5*(δβ₁¯²*(β₁-β̄₁)^2 + δβ₂¯²*(β₂-β̄₂)^2)
+        return -mean(-z + (μ/γ-1)*log(x)-x/γ for (z,μ,x) ∈ zip(Z,M,x⃗)) + 0.5*δβ¯²*(β-β̄)^2
 	end
 
     # TODO: write out gradients by hand?
@@ -404,18 +370,18 @@ function make_loss(x⃗, ḡ₁, ḡ₂, β̄₁::Float64, δβ₁¯²::Float64,
 end
 
 
-# Fits batch-specific and cell-specific parameters / gene
+# Fits cell-specific parameters / gene
 #
 # input parameters are:
-# x  => vector of genes to fit
-# ḡ₁ => average gene expression for given cell
-# ḡ₂ => average gene expression for given batch
-function fit(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²)::FitType
+# x    => vector of genes to fit
+# ḡ    => average gene expression for given cell
+# β̄    => mean of prior on β
+# δβ¯² => mean of prior of β
+function fit_continuous(x, ḡ, β̄, δβ¯²)::FitType
 	μ  = mean(x)
 	Θ₀ = [
 		log(μ),
-		β̄₁,
-        β̄₂,
+		β̄,
 		μ^2 / (var(x)-μ),
 	]
 	
@@ -424,71 +390,14 @@ function fit(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²)::Fit
 	end
 	
 	loss = 	TwiceDifferentiable(
-		make_loss(x, ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²),
+        gamma_loss(x, ḡ, β̄, δβ¯²),
 		Θ₀;
         autodiff=:forward
 	)
 	
 	constraint = TwiceDifferentiableConstraints(
-		[-∞, -∞, -∞, 0],
-		[+∞, +∞, +∞, +∞],
-	)
-
-	soln = optimize(loss, constraint, Θ₀, IPNewton())
-	
-	Θ̂  = Optim.minimizer(soln)
-	Ê  = Optim.minimum(soln)
-	δΘ̂ = diag(inv(hessian!(loss, Θ̂)))
-	
-	# pearson residuals
-	α̂, β̂₁, β̂₂, γ̂ = Θ̂
-	μ̂ = exp.(α̂ .+ β̂₁*ḡ₁ .+ β̂₂*ḡ₂)
-	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
-	ρ = (x .- μ̂) ./ σ̂
-
-    p = μ̂./(μ̂.+γ̂)
-    p[p .< 0] .= 0
-    p[p .> 1] .= 1
-
-    Φ = [1-betainc(k.+1.0,a,b) for (k,a,b) ∈ zip(x,γ̂,p)]
-    # studentized
-    # W = Diagonal(μ̂)
-    # H = (.√(W)*x)*inv(x'*W*x)*(.√(W)*x)'
-    # h = diag(H)
-    # ρ = ρ ./ .√(1 .- h)
-	
-	return (
-		parameters=Θ̂, 
-		uncertainty=δΘ̂, 
-		likelihood=Ê,
-		trend=μ̂,
-        cdf=Φ,
-		residuals=ρ,
-	)
-end
-
-# Fits ONLY cell-specific parameters / gene
-function fit(x, ḡ, β̄::Float64, δβ¯²::Float64)::FitType
-	μ  = mean(x)
-	Θ₀ = [
-		log(μ),
-		β̄,
-		μ^2 / (var(x)-μ),
-	]
-	
-    if Θ₀[end] < 0 || isinf(Θ₀[end])
-        Θ₀[end] = 1
-	end
-
-	loss = TwiceDifferentiable(
-        make_loss(x, ḡ, β̄, δβ¯²)[1],
-		Θ₀;
-        autodiff=:forward
-	)
-	
-	constraint = TwiceDifferentiableConstraints(
-		[-Inf, -Inf, 0],
-		[+Inf, +Inf, +Inf],
+		[-∞, -∞, 0],
+		[+∞, +∞, +∞],
 	)
 
 	soln = optimize(loss, constraint, Θ₀, IPNewton())
@@ -501,25 +410,26 @@ function fit(x, ḡ, β̄::Float64, δβ¯²::Float64)::FitType
 	α̂, β̂, γ̂ = Θ̂
 	μ̂ = exp.(α̂ .+ β̂*ḡ)
 	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
-	ρ = (x .- μ̂) ./ σ̂
 
-    # quantiles
-    p = μ̂./(μ̂.+γ̂)
-    p[p .< 0] .= 0
-    p[p .> 1] .= 1
+    # cdf
+    k   = μ̂ ./ γ̂
+    cdf = gammainc.(k, x./γ̂)
 
-    Φ = [1-betainc(k.+1.0,a,b) for (k,a,b) ∈ zip(x,γ̂,p)]
+    # gaussian residuals
+    ρ = erfinv.(2 .*cdf .- 1)
+    ρ[isinf.(ρ)] = 10*sign.(ρ[isinf.(ρ)])
+	
 	return (
 		parameters=Θ̂, 
 		uncertainty=δΘ̂, 
 		likelihood=Ê,
 		trend=μ̂,
-        cdf=Φ,
+        cdf=cdf,
 		residuals=ρ,
 	)
 end
 
-function fit2(x, ḡ, β̄::Float64, δβ¯²::Float64, γ̄::Float64, δγ¯²::Float64)::FitType
+function fit_discrete(x, ḡ, β̄, δβ¯²)::FitType
 	μ  = mean(x)
 	Θ₀ = [
 		log(μ),
@@ -530,16 +440,15 @@ function fit2(x, ḡ, β̄::Float64, δβ¯²::Float64, γ̄::Float64, δγ¯²:
     if Θ₀[end] < 0 || isinf(Θ₀[end])
         Θ₀[end] = 1
 	end
-
-	loss = TwiceDifferentiable(
-        make_loss2(x, ḡ, β̄, δβ¯², γ̄, δγ¯²)[1],
-		Θ₀;
-        autodiff=:forward
+	
+	loss = 	TwiceDifferentiable(
+        negbinom2_loss(x, ḡ, β̄, δβ¯²)...,
+		Θ₀
 	)
 	
 	constraint = TwiceDifferentiableConstraints(
-		[-Inf, -Inf, 0],
-		[+Inf, +Inf, +Inf],
+		[-∞, -∞, 0],
+		[+∞, +∞, +∞],
 	)
 
 	soln = optimize(loss, constraint, Θ₀, IPNewton())
@@ -552,82 +461,159 @@ function fit2(x, ḡ, β̄::Float64, δβ¯²::Float64, γ̄::Float64, δγ¯²:
 	α̂, β̂, γ̂ = Θ̂
 	μ̂ = exp.(α̂ .+ β̂*ḡ)
 	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
-	ρ = (x .- μ̂) ./ σ̂
+    ρ = (x .- μ̂) ./ σ̂
 
+    # cdf
     p = μ̂./(μ̂.+γ̂)
     p[p .< 0] .= 0
     p[p .> 1] .= 1
+    cdf = 1 .- betainc.(x.+1.0, γ̂, p)
 
-    Φ = [1-betainc(k.+1.0,a,b) for (k,a,b) ∈ zip(x,γ̂,p)]
 	return (
 		parameters=Θ̂, 
 		uncertainty=δΘ̂, 
 		likelihood=Ê,
 		trend=μ̂,
-        cdf=Φ,
+        cdf=cdf,
 		residuals=ρ,
 	)
 end
 
 
 # input parameters are:
-# β̄₁    => mean of prior on β₁ (cell-specific count)
-# δβ₁¯² => uncertainty of prior on β₁ (cell-specific count)
-function normalize(seq::Count; β̄₁=1.0, δβ₁¯²=0.0)
-    ḡ₁ = vec(mean(seq, dims=1))
-    ḡ₂ = zeros(ncells(seq))
+# β̄    => mean of prior on β₁ (cell-specific count)
+# δβ¯² => uncertainty of prior on β₁ (cell-specific count)
+function normalize(seq::Count; algo=:continuous, opt=:multmse, β̄=1.0, δβ¯²=1e-2, k=500)
+    ḡ   = log.(vec(mean(seq, dims=1)))
+    est = if algo == :continuous
+              d = float.(vec(sum(seq.data,dims=1)))
+              if opt == :simple # just fit the fractional expression to a Gamma distribution
+                  float.(seq.data) * Diagonal(1 ./ d)
+              else
+                  model = NMF(k, init="nndsvda", verbose=2)
+                  W = model.fit_transform(float.(seq.data) * Diagonal(1 ./ d))
+                  H = model.components_
+                  (W*H)*Diagonal(d)
+                  # r = nnmf(
+                  #           float.(seq.data) * Diagonal(1 ./ d),
+                  #           k, 
+                  #           init=:nndsvdar,
+                  #           alg=opt, 
+                  #           tol=1e-4,
+                  #           maxiter=200,
+                  #           verbose=true
+                  # )
+                  # (r.W*r.H)*Diagonal(d)
+              end
+          elseif algo == :discrete
+              seq
+          else
+              error("expected algo to be either 'discrete' or 'continuous', received '$algo'")
+          end
 
-    batched = false
-    for (i,b) ∈ enumerate(batches(seq))
-        ι      = inbatch(seq, b)
-        ḡ₂[ι] .= mean(seq[:,ι][:])
-
-        batched = i>=2
-    end
-
-    ḡ₁ = log.(ḡ₁)
-    ḡ₂ = batched ? log.(ḡ₂) : nothing
-
-    # step 1: obtain trend lines
     fits = Array{FitType,1}(undef, ngenes(seq))
-
-    if !batched
+    if algo == :continuous
         Threads.@threads for i ∈ 1:ngenes(seq)
-            fits[i] = fit(vec(seq.data[i,:]), ḡ₁, β̄₁, δβ₁¯²)
+            fits[i] = fit_continuous(vec(est[i,:]), ḡ, β̄, δβ¯²)
         end
-    else
+    else # already checked that algo is one of two options
         Threads.@threads for i ∈ 1:ngenes(seq)
-            fits[i] = fit(vec(seq.data[i,:]), ḡ₁, ḡ₂, β̄₁, δβ₁¯², β̄₂, δβ₂¯²) 
+            fits[i] = fit_discrete(vec(est[i,:]), ḡ, β̄, δβ¯²)
         end
     end
 
-    # TODO: more?
-    χ = vec(mean(seq,dims=2))
-    γ̂ = batched ? map((f)->f.parameters[4],  fits) : map((f)->f.parameters[3],  fits)
-    Γ = trendline(χ, γ̂, 10)
-
-    Threads.@threads for i ∈ 1:ngenes(seq)
-        fits[i] = fit2(vec(seq.data[i,:]), ḡ₁, β̄₁, δβ₁¯², Γ(χ[i]), 1e-2)
-    end
-
-    return Count(clamp!(vcat((fit.residuals' for fit ∈ fits)...),-10,10), seq.gene, seq.cell),
+    return Count(vcat((fit.residuals' for fit ∈ fits)...), seq.gene, seq.cell),
         (
             likelihood  = map((f)->f.likelihood,  fits),
-            α   = map((f)->f.parameters[1],  fits),
-            β₁  = map((f)->f.parameters[2],  fits),
-            β₂  = batched ? map((f)->f.parameters[3],  fits) : nothing,
-            γ   = batched ? map((f)->f.parameters[4],  fits) : map((f)->f.parameters[3],  fits),
-            δα  = map((f)->f.uncertainty[1], fits),
-            δβ₁ = map((f)->f.uncertainty[2], fits),
-            δβ₂ = batched ? map((f)->f.uncertainty[3], fits) : nothing,
-            δγ  = batched ? map((f)->f.uncertainty[4], fits) : map((f)->f.uncertainty[3], fits),
 
-            μ̂   = map((f)->f.trend,  fits),
+            α  = map((f)->f.parameters[1],  fits),
+            β  = map((f)->f.parameters[2],  fits),
+            γ  = map((f)->f.parameters[3],  fits),
+
+            δα = map((f)->f.uncertainty[1], fits),
+            δβ = map((f)->f.uncertainty[2], fits),
+            δγ = map((f)->f.uncertainty[3], fits),
+
             raw = [vec(seq.data[i,:]) for i in 1:size(seq.data,1)],
-            cdf = map((f)->f.cdf),
+            cdf = map((f)->f.cdf, fits),
 
-            χ  = vec(mean(seq, dims=2)),
-            M  = vec(maximum(seq, dims=2)))
+            μ̂ = map((f)->f.trend,  fits),
+            χ = vec(mean(est, dims=2)),
+            M = vec(maximum(est, dims=2))
+        )
+end
+
+function bisect(seq::Count)
+    population(cell)  = reduce(vcat, [vec([g for _ in 1:n]) for (g,n) in enumerate(cell)])
+    put!(cell, index) = for i ∈ index cell[i] += 1 end
+
+    subcell₁ = zeros(eltype(seq.data), size(seq.data))
+    subcell₂ = zeros(eltype(seq.data), size(seq.data))
+
+    for c in 1:size(seq,2)
+        N = sum(seq.data[:,c])
+        put!(view(subcell₁,:,c), sample(population(seq.data[:,c]), N÷2; replace=false))
+        subcell₂[:,c] = seq.data[:,c] - subcell₁[:,c]
+    end
+
+    count(data) = Count(data, seq.gene, seq.cell)
+    return count(subcell₁), count(subcell₂)
+end
+
+# ------------------------------------------------------------------------
+# synthetic data generation
+
+# TODO: gamma distribution?
+#       correlated genes?
+function generate(ngene, ncell; ρ=(α=Gamma(0.25,2), β=Normal(1,.01), γ=Gamma(3,3)))
+    seq = zeros(Int, ngene, ncell)
+    cdf = zeros(Float64, ngene, ncell)
+
+    z = log.(rand(Gamma(5,1), ncell))
+
+    α = log.(rand(ρ.α, ngene))
+    β = rand(ρ.β, ngene)
+    γ = rand(ρ.γ, ngene)
+
+    for g ∈ 1:ngene
+        μ⃗ = exp.(α[g] .+ β[g].*z)
+        for (c, μ) ∈ enumerate(μ⃗)
+            λ = rand(Gamma(γ[g], μ/γ[g]),1)[1]
+
+            seq[g,c] = rand(Poisson(λ),1)[1]
+        end
+        p⃗ = μ⃗./(μ⃗.+γ[g])
+        p⃗[p⃗ .< 0] .= 0
+        p⃗[p⃗ .> 1] .= 1
+        cdf[g,:] = 1 .- betainc.(vec(seq[g,:]).+1.0, γ[g], p⃗)
+
+        #=
+        for (c,p) ∈ enumerate(p⃗) 
+            pmf(x) = exp.(loggamma.(x .+ γ[g]) .- loggamma.(x .+ 1) .- loggamma(γ[g]) + x.*log.(p) .+ γ[g].*log.(1 .- p))
+            F(x) = sum(pmf(y) for y ∈ 0:x)
+            cdf[g,c] = F(seq[g,c])
+        end
+        =#
+    end
+
+    # filter out any rows that don't express in at least one cell
+    ι = vec(sum(seq,dims=2)) .> 0
+
+    seq = seq[ι, :]
+    cdf = cdf[ι, :]
+
+    α = α[ι]
+    β = β[ι]
+    γ = γ[ι]
+
+    return (
+        data = Count(seq, [string(g) for g in 1:size(seq,1)], [string(c) for c in 1:size(seq,2)]),
+        cdf  = cdf,
+        α    = α,
+        β    = β,
+        γ    = γ,
+        ḡ    = exp.(z),
+   )
 end
 
 # ------------------------------------------------------------------------
@@ -655,9 +641,11 @@ process(seq) = begin
       && sum(cell[markers.dvir]) < .1*sum(cell))
     end
 
+    #=
     seq = filtercell(seq) do _, name
         barcode(name) ∈ barcodes
     end
+    =#
 
     # keep only cells that average .1 expression across genes
     seq = filtercell(seq) do cell, _
@@ -671,21 +659,22 @@ process(seq) = begin
 end
 
 function test()
-    # seq = reduce(∪, process(scRNAload("$ROOT/rep$r"; batch="rep$r")) for r ∈ [1,2,3,4,5,6,7])
-    seq = reduce(∪, process(scRNAload("$ROOT/rep$r")) for r ∈ [1,2,3,4,5,6,7])
+    # seq = reduce(∪, process(load("$ROOT/rep$r"; batch="rep$r")) for r ∈ [1,2,3,4,5,6,7])
+    # seq = reduce(∪, process(load("$ROOT/rep$r")) for r ∈ [1,2,3,4,5,6,7])
+    seq = reduce(∪, process(load("$ROOT/rep$r")) for r ∈ [3,4,5,6,7])
     seq = filtergene(seq) do gene, _
         sum(gene) >= 1e-2*length(gene) && maximum(gene) > 1
     end
 
-    return normalize(seq; β̄₁=1.0, δβ₁¯²=1.0)
-
+    # return normalize(seq; β̄=1.0, δβ¯²=1e0, k=ncells(seq)÷2)
+    
     # NOTE: This is kept for posterity! This is the normalization of DVEX paper
     #       They divide out by the column sum and scale by maximum cell depth
     #       Add a pseudo count and take log transform
     #       I recover the .85 correlation there! Solely a function of the pseudocount...
     
-    # seq = Count(log10.(maximum(sum(seq,dims=1)) .* seq ./ sum(seq, dims=1) .+ 1), seq.gene, seq.cell)
-    # return seq, nothing
+    seq = Count(log10.(maximum(sum(seq,dims=1)) .* seq ./ sum(seq, dims=1) .+ 1), seq.gene, seq.cell)
+    return seq, nothing
 end
 
 end

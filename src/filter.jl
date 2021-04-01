@@ -446,7 +446,7 @@ function test()
 
     println("approximating counts...")
 
-    r   = nnmf(float.(data), 500, init=:nndsvdar, alg=:multmse, maxiter=200, verbose=true)
+    r   = nnmf(float.(data), 1000, init=:nndsvdar, alg=:multmse, maxiter=200, verbose=true)
     est = r.W*r.H 
     @show cor(est[:], data[:]), cor(log.(est[:].+1), log.(data[:].+1))
 

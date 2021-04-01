@@ -109,21 +109,23 @@ function cost_simple(ref, qry)
     ϕ = match(ref.gene, qry.gene)
     Σ = zeros(size(ref.data,1), size(qry.data,1))
 
-    k    = 2
-    σ(x) = 1 - 1/(1+(1/x-1)^(-k))
-
+    σ(x) = x
     for i in 1:size(ref.data,2)
         r  = ref.data[:,i]
         q  = qry.data[:,ϕ[i]]
 
-        R = cumulative(r)
-        Q = cumulative(q)
+        R = 2*σ.((rank(r)./length(r))) .- 1
+        Q = 2*σ.((rank(q)./length(q))) .- 1
 
+        Σ -= (R*Q')
+
+        #=
         for j in 1:size(ref.data,1)
             for k in 1:size(qry.data,1)
                 Σ[j,k] += -*(2*σ(R(r[j]).^4)-1)*(2*σ(Q(q[k]).^4)-1)
             end
         end
+        =#
     end
 
     return Matrix(Σ), ϕ
@@ -135,8 +137,9 @@ function cost_scan(ref, qry, ν, ω)
     ϕ = match(ref.gene, qry.gene)
     Σ = zeros(size(ref.data,1), size(qry.data,1))
 
-    k    = 1
-    σ(x) = 1 - 1/(1+(1/x-1)^(-k))
+    # k    = 1
+    # σ(x) = 1 - 1/(1+(1/x-1)^(-k))
+    σ(x) = x
 
     for i in 1:size(ref.data,2)
         r  = ref.data[:,i]
@@ -149,6 +152,55 @@ function cost_scan(ref, qry, ν, ω)
     end
 
     return Matrix(Σ), ϕ
+end
+
+function sinkhorn_full(M::Array{Float64,2};
+                  a::Maybe{Array{Float64}} = missing, 
+                  b::Maybe{Array{Float64}} = missing,
+                  maxᵢ::Integer            = 1000,
+                  τ::Real                  = 1e-5,
+                  verbose::Bool            = false)
+    c = 1 ./sum(M, dims=1)
+    r = 1 ./(M*c')
+
+    if ismissing(a)
+        a = ones(size(M,1), 1) ./ size(M,1)
+    end
+    if ismissing(b)
+        b = ones(size(M,2), 1) ./ size(M,2)
+    end
+
+    if length(a) != size(M,1)
+        throw(error("invalid size for row prior"))
+    end
+    if length(b) != size(M,2)
+        throw(error("invalid size for column prior"))
+    end
+
+    i = 0
+    rdel, cdel = Inf, Inf
+    while i < maxᵢ && (rdel > τ || cdel > τ)
+        i += 1
+
+        cinv = M'*r
+        cdel = maximum(abs.(cinv.*c .- b))
+        c    = b./cinv
+
+        rinv = M*c
+        rdel = maximum(abs.(rinv.*r .- a))
+        r    = a./rinv
+
+        if verbose
+            println("Iteration $i. Row = $rdel, Col = $cdel")
+        end
+
+    end
+
+    if verbose
+        println("Terminating at iteration $i. Row = $rdel, Col = $cdel")
+    end
+
+    return r, c
 end
 
 function sinkhorn(M::Array{Float64,2};

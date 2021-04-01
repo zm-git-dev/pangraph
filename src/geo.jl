@@ -134,9 +134,8 @@ length(G::Graph) = length(G.verts)
 # ------------------------------------------------------------------------
 # operations
 
-function neighborhood(x, k::Int)
-    D = distance(x)
-
+function neighborhood(x, k::Int; D=missing)
+    D = ismissing(D) ? distance(x) : D
     G = Graph([Vertex(x[:,i]) for i ∈ 1:size(x,2)])
     for i ∈ 1:size(D,1)
         neighbor = sortperm(D[i,:])[2:end]
@@ -216,7 +215,7 @@ function geodesics(G::Graph; sparse=true)
         adj  = adjacency_list(G)
         dist = zeros(length(G), length(G))
 
-        @inbounds Threads.@threads for v = 1:length(G)
+        Threads.@threads for v ∈ 1:length(G)
             dijkstra!(view(dist,:,v), adj, v)
         end
 
@@ -225,7 +224,8 @@ function geodesics(G::Graph; sparse=true)
         return floyd_warshall(G)
     end
 end
-geodesics(x, k; sparse=true) = geodesics(neighborhood(x, k); sparse=sparse)
+
+geodesics(x, k; D=missing, sparse=true) = geodesics(neighborhood(x, k; D=D); sparse=sparse)
 
 # ------------------------------------------------------------------------
 # non ml dimensional reduction
