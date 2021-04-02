@@ -23,6 +23,9 @@ begin
 	import WGLMakie
 end
 
+# ╔═╡ b992e41a-9334-11eb-1919-87967d572a21
+using JLD2, FileIO
+
 # ╔═╡ fc2b03f0-924b-11eb-0f20-45edefca4b76
 md"""
 # Normalization
@@ -285,6 +288,15 @@ G = \sum\limits_{i=1}^G  u^2_{i} \,\text{Var}[X]_{i\alpha} \, v^2_{\alpha} \  \f
 ``
 
 A priori it's unclear if we could reliably detect $\gamma_i$ at the low counts we observe in-vivo
+
+#### GLM formulation
+scRNAseq data will have systematic variations in cell-depth simply as a technological consequence. Thus we must fit our distributions sensitive to this fact. The simple solution would be to divide all cells by their total sequencing depth. We opt for a similar, yet more flexible approach, namely we allow for the mean of the negative binomial to be dependent on the sequencing depth for each cell, $z_\alpha$. Specifically, we take the mean of the negative binomial distribution for gene $i$ and cell $\alpha$ to be
+
+``
+\text{log}(\mu_{i\alpha}) = \alpha_i + \beta_i * \text{log}(z_\alpha)
+``
+
+``\alpha_i`` and ``\beta_i``, along with the overdispersion parameter $\gamma_i$ define 3 parameters per gene we fit from raw count data using a Maximum Likelihood formalism
 """
 
 # ╔═╡ c65e8a86-9259-11eb-29bb-3bf5c089746f
@@ -520,9 +532,10 @@ let
 	
 	λ = svdvals(X̃) #eigvals(Σ̃)
 	p = cdfplot(λ, xscale=:log10, linewidth=2, label="Empirical distribution")
+	k = sum(λ .>= (sqrt(size(X̃,1))+sqrt(size(X̃,2))-12))
 	
-	vline!([(sqrt(size(X̃,1))+sqrt(size(X̃,2)))], linewidth=2, linestyle=:dashdot, label="MP maximum eigenvalue")
-	title!("rank 100 (overdispersed)")
+	vline!([(sqrt(size(X̃,1))+sqrt(size(X̃,2))-12)], linewidth=2, linestyle=:dashdot, label="MP maximum eigenvalue")
+	title!("rank ≈ $k (overdispersed)")
 	xaxis!("singular value")
 	yaxis!("CDF")
 	
@@ -939,15 +952,6 @@ S̃, Ṽ = let
 	(Diagonal(.√u²) * seq * Diagonal(.√v²)), (Diagonal(u²) * V * Diagonal(v²))
 end
 
-# ╔═╡ 3834ca98-930a-11eb-30dc-37a02ce6c4cc
-let
-	p = scatter(S̃[1,:], Sᵪ[1,:], alpha=0.1, label="")
-	for i ∈ sample(2:size(S̃,1), 100; replace=false)
-		scatter!(S̃[i,:], Sᵪ[i,:], alpha=0.1, label="")
-	end
-	p
-end
-
 # ╔═╡ df6e73de-9309-11eb-3bd3-3f9f511744cf
 md"""
 ## Data imputation
@@ -962,6 +966,9 @@ Let's take our scaled matrix (of unit variance) and see what we can find. In all
 
 # ╔═╡ 071f2c26-930c-11eb-2745-93cb2001e76b
 PointCloud = ingredients("../src/geo.jl").PointCloud
+
+# ╔═╡ c8227e0e-9326-11eb-2724-cb588170c7c2
+Inference = ingredients("../src/infer.jl").Inference
 
 # ╔═╡ 8ffaa54e-930b-11eb-2f1f-9907008b76d2
 md"""
@@ -1100,10 +1107,10 @@ begin
 
 		# cdf
 		k   = μ̂ ./ γ̂
-		cdf = GSL.gamma_inc.(k, x./γ̂)
+		cdf = GSL.sf_gamma_inc_P.(k, x./γ̂)
 
 		# gaussian residuals
-		ρ = erfinv.(clamp.(2 .*cdf .- 1,0,1))
+		ρ = erfinv.(clamp.(2 .*cdf .- 1,-1,1))
 		ρ[isinf.(ρ)] = 10*sign.(ρ[isinf.(ρ)])
 
 		return (
@@ -1152,6 +1159,188 @@ Sᵧ, pᵧ = let
 	Ñ = (S*Kₑ) .* sum(seq.data,dims=1)
 	fit_continuous(Ñ)
 end
+
+# ╔═╡ 4ff1b8b4-9321-11eb-249b-1f35bc1facce
+let
+	p = scatter(pᵧ.χ, pᵧ.α, 
+		alpha=0.1, 
+		xscale=:log10, 
+		marker_z=log10.(pᵧ.δα), 
+		label=false
+	)
+	xaxis!("expression / cell")
+	yaxis!("estimated α")
+	p
+end
+
+# ╔═╡ 5a9982a6-9321-11eb-37a5-0be0a5b05d42
+let
+	p = scatter(pᵧ.χ, pᵧ.β, 
+		alpha=0.1, 
+		xscale=:log10, 
+		marker_z=log10.(pᵧ.δβ), 
+		label=false
+	)
+	xaxis!("expression / cell")
+	yaxis!("estimated β")
+	p
+end
+
+# ╔═╡ 7220bdb0-9321-11eb-2a89-79bcaa28726a
+let
+	p = scatter(pᵧ.χ, pᵧ.γ, 
+		alpha=0.1, 
+		xscale=:log10,
+		yscale=:log10, 
+		marker_z=log10.(pᵧ.δγ), 
+		label=false
+	)
+	xaxis!("expression / cell")
+	yaxis!("estimated γ")
+	p
+end
+
+# ╔═╡ 87d39e64-9321-11eb-0170-834e21b45cc4
+let
+	cm = ColorSchemes.inferno
+	χ  = log10.(pᵧ.χ)
+	χ  = (χ .- minimum(χ)) ./ (maximum(χ) - minimum(χ))
+	
+	p = cdfplot(pᵧ.cdf[1], color=get(cm,χ[1]), alpha=0.01, label="")
+	for i ∈ 2:5:length(pᵧ.cdf)
+		cdfplot!(pᵧ.cdf[i], color=get(cm,χ[i]), alpha=0.01, label="")
+	end
+	
+	plot!(0:1, 0:1, linestyle=:dashdot, color=:coral2, label="ideal", legend=:bottomright, linewidth=2)
+	p
+end
+
+# ╔═╡ bb4aac90-9323-11eb-3562-afdd70610e24
+let
+	F = svd(Sᵧ)
+	cdfplot(F.S, linewidth=2, xscale=:log10, label="empirical")
+	vline!([sqrt(size(Sᵧ,1)) + sqrt(size(Sᵧ,2))], linestyle=:dashdot, linewidth=2, label="MP maximum")
+	
+	k = sum(F.S .> (sqrt(size(Sᵧ,1)) + sqrt(size(Sᵧ,2))))
+
+	xaxis!("singular values")
+	yaxis!("CDF")
+	title!("rank ≈ $k")
+end
+
+# ╔═╡ 45ada9de-9325-11eb-1450-793727639203
+S̃ᵧ = let d = 40
+	F = svd(Sᵧ);
+	F.U[:,1:d]*Diagonal(F.S[1:d])*F.Vt[1:d,:]
+end;
+
+# ╔═╡ 5c553b5e-9325-11eb-3f4b-e12c3c1c743b
+Gᵧ = PointCloud.geodesics(S̃ᵧ, 12); size(Gᵧ)
+
+# ╔═╡ 14462c08-933c-11eb-3369-3d081358bb35
+import PyPlot
+
+# ╔═╡ 17e1e152-933c-11eb-335b-6f2b072168ce
+PyPlot.clf(); PyPlot.matshow(Gᵧ); PyPlot.gcf()
+
+# ╔═╡ 58dd7382-9326-11eb-09d6-15251ddbb0bd
+let
+	ρ, Rs = PointCloud.scaling(Gᵧ, 1000)
+
+	p = plot(Rs, ρ', alpha=0.03, color=:cyan3, label="")
+	plot!(Rs, mean(ρ, dims=1)', linewidth=5, alpha=1, color=:cyan3, label="mean")
+
+	xaxis!("radius", :log10)
+	yaxis!("number of points", :log10)
+
+	plot!(Rs, 4e-3*Rs.^3, linestyle=:dashdot, linewidth=2, alpha=1, color=:coral3, label="αR³", legend=:bottomright)
+	plot!(Rs, 4e-2*Rs.^2, linestyle=:dashdot, linewidth=2, alpha=1, color=:coral3, label="αR²", legend=:bottomright)
+
+	p
+end
+
+# ╔═╡ c31f47ee-9334-11eb-0fa1-1be19bf991ce
+ν, ω = load("params.jld2", "ν", "ω")
+
+# ╔═╡ d7e8e7a6-9326-11eb-0a3d-e918e72dac08
+ψ, embryo, db, Φ = Inference.inversion(Sᵧ, seq.gene; ν=ν, ω=ω);
+
+# ╔═╡ b2104258-9327-11eb-2151-69959f436b69
+Ψᵣ = ψ(0.1)*size(Sᵧ,2);
+
+# ╔═╡ 5b7847d6-9329-11eb-0269-dbbcf2d1e563
+md"""
+##### AP Position
+"""
+
+# ╔═╡ 18b52476-9326-11eb-26ac-8ff0d7afe21e
+let
+	ξ = PointCloud.mds(Gᵧ.^2, 3)
+	AP = embryo[:,1]
+	WGLMakie.scatter(Ψᵣ*ξ[:,1], Ψᵣ*ξ[:,2], Ψᵣ*ξ[:,3], color=AP, markersize=100)
+end
+
+# ╔═╡ 66700b9c-9329-11eb-1cde-87750e3652af
+md"""
+##### DV Position
+"""
+
+# ╔═╡ 1fcae9d8-9328-11eb-13fb-6935aaa65434
+let
+	ξ  = PointCloud.mds(Gᵧ.^2, 3)
+	DV = embryo[:,2]#atan.(embryo[:,2],embryo[:,3])
+
+	WGLMakie.scatter(Ψᵣ*ξ[:,1], Ψᵣ*ξ[:,2], Ψᵣ*ξ[:,3], color=DV, markersize=100)
+end
+
+# ╔═╡ f97f0ac6-9335-11eb-3051-336f0f48781f
+ξ = PointCloud.mds(Gᵧ.^2, 3);
+
+# ╔═╡ be47ae4c-9335-11eb-1deb-1732ce57ed4b
+seq.gene[sortperm([cor(vec(Sᵧ[i,:]), ξ[:,1]) for i in 1:size(seq,1)])][1:50]
+
+# ╔═╡ 0838eadc-9336-11eb-0079-23c7230a7bbc
+seq.gene[sortperm([cor(vec(Sᵧ[i,:]), ξ[:,1]) for i in 1:size(seq,1)])][end-50:end]
+
+# ╔═╡ 1a3fbf94-9336-11eb-2e48-35f09a2f14d5
+seq.gene[sortperm([cor(vec(Sᵧ[i,:]), ξ[:,2]) for i in 1:size(seq,1)])][1:50]
+
+# ╔═╡ 14aa52a6-9336-11eb-1a3d-a97d2d2dbe07
+seq.gene[sortperm([cor(vec(Sᵧ[i,:]), ξ[:,2]) for i in 1:size(seq,1)])][end-50:end]
+
+# ╔═╡ 55715968-9336-11eb-1845-a583df1166f6
+seq.gene[sortperm([cor(vec(Sᵧ[i,:]), ξ[:,3]) for i in 1:size(seq,1)])][1:50]
+
+# ╔═╡ 58255396-9336-11eb-23e5-67d8002b5595
+seq.gene[sortperm([cor(vec(Sᵧ[i,:]), ξ[:,3]) for i in 1:size(seq,1)])][end-50:end]
+
+# ╔═╡ a958c94a-932d-11eb-247c-1b44b35cf02f
+GENE2 = findfirst(seq.gene .== "eve")
+
+# ╔═╡ 497aee7c-932d-11eb-07fe-3b41d04c90f8
+let
+	WGLMakie.scatter(-embryo[:,1], embryo[:,2], embryo[:,3], color=Ψᵣ*Sᵧ[GENE2,:], markersize=2000)
+end
+
+# ╔═╡ 4fcb204a-933b-11eb-3797-571078415e34
+let
+	WGLMakie.scatter(-embryo[:,1], embryo[:,2], embryo[:,3], color=vec(Ψᵣ[:,1100]), markersize=2000)
+end
+
+# ╔═╡ d2339cb4-932a-11eb-293f-d35764e7b8f7
+md"""
+#### Conclusion
+I think this works great. The pipeline in broad strokes is:
+  1. Fit highly expressed genes to negative binomial.
+  2. Use estimates to obtain prior for γ.
+  3. Fit all genes to negative binomial with prior from before. 
+  4. Use overdispersion factor γ in the variance rescaling equation to set all row and column variances to 1. 
+  5. Find the gap in the spectrum, i.e. the rank of the original count matrix.
+  6. Use the obtained low-dimensional manifold to estimate intercellular distances.
+  7. Use distances in Gaussian kernel to lightly smooth the original raw data. 
+  8. Fit smoothed data to Γ distribution.
+  9. Transform into standard normal variables.
+"""
 
 # ╔═╡ 8e009626-9316-11eb-039e-fb1183e60421
 md"""
@@ -1261,7 +1450,7 @@ function pairwise_dists(data, cost; β=.1)
 end
 
 # ╔═╡ Cell order:
-# ╠═2466c2a4-90c7-11eb-3f9c-5b87a7a35bb6
+# ╟─2466c2a4-90c7-11eb-3f9c-5b87a7a35bb6
 # ╟─fc2b03f0-924b-11eb-0f20-45edefca4b76
 # ╟─969b3f50-90bb-11eb-2b67-c784d20c0eb2
 # ╟─be981c3a-90bb-11eb-3216-6bed955446f5
@@ -1272,7 +1461,7 @@ end
 # ╟─9594926e-91d0-11eb-22de-bdfe3290b19b
 # ╟─d7e28c3e-9246-11eb-0fd3-af6f94ea8562
 # ╠═ca2dba38-9184-11eb-1793-f588473daad1
-# ╠═4f65301e-9186-11eb-1faa-71977e8fb097
+# ╟─4f65301e-9186-11eb-1faa-71977e8fb097
 # ╟─bf8b0edc-9247-11eb-0ed5-7b1d16e00fc4
 # ╟─f387130c-924f-11eb-2ada-794dfbf4d30a
 # ╠═eed136bc-924d-11eb-3e3a-374d21772e4b
@@ -1309,29 +1498,58 @@ end
 # ╟─9f56e6fc-9303-11eb-2bdd-5da078b4d9c3
 # ╟─37afad28-9304-11eb-2f4d-8397fca7bb99
 # ╠═d2e5b674-9305-11eb-1254-5b9fa030e8ee
-# ╠═70fc4538-9306-11eb-1509-3dfa1034d8aa
+# ╟─70fc4538-9306-11eb-1509-3dfa1034d8aa
 # ╟─861ca2b6-9306-11eb-311c-69c6984faa26
-# ╠═97ded136-9306-11eb-019b-636b739a61d6
+# ╟─97ded136-9306-11eb-019b-636b739a61d6
 # ╟─e05d2a98-9306-11eb-252e-5baf6fc59f8f
 # ╟─bdffde54-9307-11eb-2ccb-ed48777f28f8
 # ╟─91742bde-9309-11eb-2acc-836cc1ab1aee
-# ╟─3834ca98-930a-11eb-30dc-37a02ce6c4cc
 # ╟─df6e73de-9309-11eb-3bd3-3f9f511744cf
 # ╟─071f2c26-930c-11eb-2745-93cb2001e76b
+# ╟─c8227e0e-9326-11eb-2724-cb588170c7c2
 # ╟─8ffaa54e-930b-11eb-2f1f-9907008b76d2
 # ╠═dd9986f4-930f-11eb-33b8-67dbc4d1d087
 # ╠═3c979aa0-930c-11eb-3e6e-9bdf7f3029b5
 # ╟─ed6333c6-930c-11eb-25c0-c551592746e0
 # ╟─76b9c454-9316-11eb-1548-bdef70d532d6
-# ╠═585bed74-9319-11eb-2854-9d74e1d592c2
+# ╟─585bed74-9319-11eb-2854-9d74e1d592c2
 # ╟─7cf6be2e-9315-11eb-1cb1-396f2131908b
 # ╟─91147112-9315-11eb-0a71-8ddfdb2497a6
 # ╟─f7d6acc2-9314-11eb-03f3-f9f221ded27c
 # ╠═e96bc054-9310-11eb-25ca-576caeb336b8
 # ╟─7a3b0202-9311-11eb-101e-99fbc40c6633
 # ╟─c9496d2a-931b-11eb-0228-5f08b4e1ff9f
-# ╠═e75442f4-931b-11eb-0a5f-91e8c58ab47e
+# ╟─e75442f4-931b-11eb-0a5f-91e8c58ab47e
 # ╠═94fa4c96-931c-11eb-1a1e-556bb10223f5
+# ╟─4ff1b8b4-9321-11eb-249b-1f35bc1facce
+# ╟─5a9982a6-9321-11eb-37a5-0be0a5b05d42
+# ╟─7220bdb0-9321-11eb-2a89-79bcaa28726a
+# ╟─87d39e64-9321-11eb-0170-834e21b45cc4
+# ╟─bb4aac90-9323-11eb-3562-afdd70610e24
+# ╟─45ada9de-9325-11eb-1450-793727639203
+# ╠═5c553b5e-9325-11eb-3f4b-e12c3c1c743b
+# ╠═14462c08-933c-11eb-3369-3d081358bb35
+# ╠═17e1e152-933c-11eb-335b-6f2b072168ce
+# ╟─58dd7382-9326-11eb-09d6-15251ddbb0bd
+# ╠═b992e41a-9334-11eb-1919-87967d572a21
+# ╠═c31f47ee-9334-11eb-0fa1-1be19bf991ce
+# ╠═d7e8e7a6-9326-11eb-0a3d-e918e72dac08
+# ╠═b2104258-9327-11eb-2151-69959f436b69
+# ╟─5b7847d6-9329-11eb-0269-dbbcf2d1e563
+# ╠═18b52476-9326-11eb-26ac-8ff0d7afe21e
+# ╟─66700b9c-9329-11eb-1cde-87750e3652af
+# ╠═1fcae9d8-9328-11eb-13fb-6935aaa65434
+# ╠═f97f0ac6-9335-11eb-3051-336f0f48781f
+# ╟─be47ae4c-9335-11eb-1deb-1732ce57ed4b
+# ╟─0838eadc-9336-11eb-0079-23c7230a7bbc
+# ╟─1a3fbf94-9336-11eb-2e48-35f09a2f14d5
+# ╟─14aa52a6-9336-11eb-1a3d-a97d2d2dbe07
+# ╟─55715968-9336-11eb-1845-a583df1166f6
+# ╟─58255396-9336-11eb-23e5-67d8002b5595
+# ╠═a958c94a-932d-11eb-247c-1b44b35cf02f
+# ╟─497aee7c-932d-11eb-07fe-3b41d04c90f8
+# ╠═4fcb204a-933b-11eb-3797-571078415e34
+# ╠═d2339cb4-932a-11eb-293f-d35764e7b8f7
 # ╟─8e009626-9316-11eb-039e-fb1183e60421
 # ╟─93f9188a-9316-11eb-1c35-2d93a1936277
 # ╟─59d58e3c-9317-11eb-18c2-a54f3bfcb976

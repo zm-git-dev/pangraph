@@ -65,7 +65,7 @@ function match(x, y)
     for (g,i) in x
         index[i] = g
     end
-    return [y[k] for k in index]
+    return [k ∈ keys(y) ? y[k] : nothing for k in index]
 end
 
 # ------------------------------------------------------------------------
@@ -76,6 +76,8 @@ function cost(ref, qry; α=1, β=1, γ=0, ω=nothing)
 
     Σ = zeros(size(ref.data,1), size(qry.data,1))
     for i in 1:size(ref.data,2)
+        isnothing(ϕ[i]) && continue
+
         r  = ref.data[:,i]
         q  = qry.data[:,ϕ[i]]
         ω₀ = isnothing(ω) ? 1 : ω[i]
@@ -109,8 +111,12 @@ function cost_simple(ref, qry)
     ϕ = match(ref.gene, qry.gene)
     Σ = zeros(size(ref.data,1), size(qry.data,1))
 
+    @show sum(1 for elt ∈ ϕ if !isnothing(elt))
+
     σ(x) = x
     for i in 1:size(ref.data,2)
+        isnothing(ϕ[i]) && continue
+
         r  = ref.data[:,i]
         q  = qry.data[:,ϕ[i]]
 
@@ -137,70 +143,23 @@ function cost_scan(ref, qry, ν, ω)
     ϕ = match(ref.gene, qry.gene)
     Σ = zeros(size(ref.data,1), size(qry.data,1))
 
-    # k    = 1
-    # σ(x) = 1 - 1/(1+(1/x-1)^(-k))
-    σ(x) = x
+    # σ(x) = x
+    k    = 1
+    σ(x) = 1 ./ (1+((1-x)/x)^k)
 
     for i in 1:size(ref.data,2)
+        isnothing(ϕ[i]) && continue
+
         r  = ref.data[:,i]
         q  = qry.data[:,ϕ[i]]
 
         R = 2*σ.((rank(r)./length(r)).^ν[i]) .- 1
-        Q = 2*σ.((rank(q)./length(q)).^ν[i]) .- 1
+        Q = 2*(rank(q)./length(q)) .- 1
 
         Σ -= ω[i]*(R*Q')
     end
 
     return Matrix(Σ), ϕ
-end
-
-function sinkhorn_full(M::Array{Float64,2};
-                  a::Maybe{Array{Float64}} = missing, 
-                  b::Maybe{Array{Float64}} = missing,
-                  maxᵢ::Integer            = 1000,
-                  τ::Real                  = 1e-5,
-                  verbose::Bool            = false)
-    c = 1 ./sum(M, dims=1)
-    r = 1 ./(M*c')
-
-    if ismissing(a)
-        a = ones(size(M,1), 1) ./ size(M,1)
-    end
-    if ismissing(b)
-        b = ones(size(M,2), 1) ./ size(M,2)
-    end
-
-    if length(a) != size(M,1)
-        throw(error("invalid size for row prior"))
-    end
-    if length(b) != size(M,2)
-        throw(error("invalid size for column prior"))
-    end
-
-    i = 0
-    rdel, cdel = Inf, Inf
-    while i < maxᵢ && (rdel > τ || cdel > τ)
-        i += 1
-
-        cinv = M'*r
-        cdel = maximum(abs.(cinv.*c .- b))
-        c    = b./cinv
-
-        rinv = M*c
-        rdel = maximum(abs.(rinv.*r .- a))
-        r    = a./rinv
-
-        if verbose
-            println("Iteration $i. Row = $rdel, Col = $cdel")
-        end
-
-    end
-
-    if verbose
-        println("Terminating at iteration $i. Row = $rdel, Col = $cdel")
-    end
-
-    return r, c
 end
 
 function sinkhorn(M::Array{Float64,2};
@@ -298,16 +257,17 @@ cor(x,y) = cov(x,y) / (std(x) * std(y))
 
 function make_objective(ref, qry)
     function objective(Θ)
-        β, ν, ω = 0.5, Θ[1:84], Θ[85:end]
+        β, ν, ω = 0.1, Θ[1:84], Θ[85:end]
         Σ, ϕ    = cost_scan(ref, qry, ν, ω)
 
         ψ = sinkhorn(exp.(-(1 .+ β*Σ)))
         ψ *= minimum(size(ψ))
 
-        db  = ref.data
-        est = ψ*qry.data[:,ϕ]
+        ι   = findall(.!isnothing.(ϕ))
+        db  = ref.data[:,ι]
+        est = ψ*qry.data[:,ϕ[ι]]
 
-        return 1-mean(cor(db[:,i], est[:,i]) for i in 1:size(ref.data,2))
+        return 1-mean(cor(db[:,i], est[:,i]) for i in 1:size(db,2))
     end
 
     return objective
@@ -334,9 +294,9 @@ function scan_params(count, genes)
     # )
 
     return bboptimize(f, 
-                      SearchRange=[[(0.1, 10.0) for _ ∈ 1:84]; [(0.01, 3.0) for _ ∈ 1:84]], 
-                      MaxFuncEvals=5000, 
-                      Method=:generating_set_search, 
+                      SearchRange=[[(0.1, 10.0) for _ ∈ 1:84]; [(0.01, 10.0) for _ ∈ 1:84]], 
+                      MaxFuncEvals=500, 
+                      Method=:generating_set_search,
                       TraceMode=:compact
     ) #, Method=:dxnes, NThreads=Threads.nthreads(), )
 end
