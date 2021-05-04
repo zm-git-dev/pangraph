@@ -294,8 +294,8 @@ function scan_params(count, genes)
     # )
 
     return bboptimize(f, 
-                      SearchRange=[[(0.1, 10.0) for _ ∈ 1:84]; [(0.01, 10.0) for _ ∈ 1:84]], 
-                      MaxFuncEvals=500, 
+                      SearchRange=[[(0.01, 100.0) for _ ∈ 1:84]; [(0.01, 100.0) for _ ∈ 1:84]], 
+                      MaxFuncEvals=5000,
                       Method=:generating_set_search,
                       TraceMode=:compact
     ) #, Method=:dxnes, NThreads=Threads.nthreads(), )

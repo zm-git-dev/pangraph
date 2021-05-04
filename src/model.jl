@@ -84,9 +84,18 @@ end
 # data scaling / preprocessing
 
 # x is assumed to be dᵢ x N shaped
-function preprocess(x; dₒ::Union{Nothing,Int}=nothing, ϕ=(x)->x)
+function preprocess(x; dₒ::Union{Nothing,Int}=nothing, ϕ=(x)->x, F=nothing)
     X = gpu(x)
-	F = svd(X)
+    F = isnothing(F) ? svd(X) : F
+
+    # NOTE: hotpath for debugging
+    if dₒ == size(x,1)
+        return (
+            data   = x,
+            weight = ones(dₒ),
+            map    = (x) -> x
+        )
+    end
 	
 	d = F.Vt
 	μ = mean(d, dims=2)
@@ -115,10 +124,10 @@ function model(dᵢ, dₒ; Ws=Int[], normalizes=Int[], dropouts=Int[], σ=elu)
     length(normalizes) > 0 && length(Ws) < maximum(normalizes) ≤ 0 && error("invalid normalization layer position")
 
     layers = LayerIterator(
-                    [dᵢ; Ws; dₒ], 
-                    Set(dropouts),
-                    Set(normalizes), 
-                    σ₀, σ
+                [dᵢ; Ws; dₒ], 
+                Set(dropouts),
+                Set(normalizes), 
+                σ₀, σ
              )
 
     F   = Chain(layers...)
@@ -198,7 +207,7 @@ end
 function noop(epoch) end
 
 # data training
-function train!(model, data, loss; B=64, η=1e-3, N=100, log=noop)
+function train!(model, data, index, loss; B=64, η=1e-3, N=100, log=noop)
     Θ   = params(model.identity)
     opt = ADAM(η)
 
@@ -207,7 +216,7 @@ function train!(model, data, loss; B=64, η=1e-3, N=100, log=noop)
         X, I = batch(data, B)
         for (i,x) ∈ zip(I,X)
             E, backpropagate = pullback(Θ) do
-                loss(x, i, false)
+                loss(x, index[i], false)
             end
 
             isnan(E) && @goto done

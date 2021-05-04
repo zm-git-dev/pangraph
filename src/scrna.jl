@@ -19,8 +19,8 @@ import LinearAlgebra:
 include("io.jl")
 using .DataIO: read_mtx, read_barcodes, read_features
 
-include("filter.jl")
-using .DataFilter
+# include("filter.jl")
+# using .DataFilter
 
 export barcodes, genes
 
@@ -622,10 +622,6 @@ end
 const ROOT = "/home/nolln/root/data/seqspace/raw"
 
 process(seq) = begin
-    barcodes = open("$ROOT/barcodes") do io
-        Set([line for line ∈ eachline(io)])
-    end
-
     markers  = (
         yolk = locus(seq, "sisA", "CG8129", "Corp", "CG8195", "CNT1", "ZnT77C"),
         pole = locus(seq, "pgc"),
@@ -642,6 +638,11 @@ process(seq) = begin
     end
 
     #=
+    
+    barcodes = open("$ROOT/barcodes") do io
+        Set([line for line ∈ eachline(io)])
+    end
+
     seq = filtercell(seq) do _, name
         barcode(name) ∈ barcodes
     end

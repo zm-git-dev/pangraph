@@ -2,6 +2,10 @@ module SeqSpace
 
 using GZip
 using BSON: @save
+using LinearAlgebra: norm
+using Flux
+
+import BSON
 
 include("geo.jl")
 include("io.jl")
@@ -21,7 +25,7 @@ export run
 
 struct HyperParams
     dₒ :: Int          # output dimensionality
-    Ws :: Array{Int,1} # network layer widths
+    Ws :: Array{Int,1} # (latent) layer widths
     BN :: Array{Int,1} # (latent) layers followed by batch normalization
     DO :: Array{Int,1} # (latent) layers followed by drop outs
     N  :: Int          # number of epochs to run
@@ -83,8 +87,100 @@ cov(x,y)   = mean((x.-mean(x)) .* (y.-mean(y)))
 ball(D, k) = mean(sort(view(D,:,i))[k+1] for i in 1:size(D,2))
 
 # ------------------------------------------------------------------------
+# i/o
+
+# TODO: add a save function
+
+# assumes a BSON i/o
+function load(io)
+    database = BSON.parse(io)
+    result, input = database[:result], database[:in]
+
+end
+
+# ------------------------------------------------------------------------
 # main functions
 
+function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
+    x⃗, ω, ϕ = preprocess(data; dₒ=dₒ, F=F)
+
+    D² = isnothing(D²) ? geodesics(ϕ(x⃗), param.kₙ).^2 : D²
+    kₙ = param.kₙ
+
+    M = model(size(x⃗, 1), param.dₒ; 
+          Ws         = param.Ws, 
+          normalizes = param.BN, 
+          dropouts   = param.DO
+    )
+
+    y⃗, I = validate(x⃗, param.V)
+
+    R          = ball(D², param.kₙ)
+    vecnorm(x) = sum(norm.(eachcol(x)))
+
+    loss = (x, i, log) -> begin
+        z = M.pullback(x)
+        x̂ = M.pushforward(z)
+
+        # reconstruction loss
+        ϵᵣ = (sum(sum((x.-x̂).^2, dims=2).*ω) / (vecnorm(x.*.√ω)*vecnorm(x̂.*.√ω)))*size(x,2)
+        # ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω) / size(x,2)
+
+        # pairwise distances
+        D̂² = distance²(z)
+        D̄² = D²[i,i]
+        # R = ball(D̄², param.kₗ)
+        
+        d = upper_tri(D̄²)
+        d̂ = upper_tri(D̂²)
+
+        # neighborhood isometry
+        n  = (d .<= R) .| (d̂ .<= R)
+        ϵₓ = any(n) ? (sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n])))*sum(n) : 0
+        # ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0
+
+        # nₑ = sum(n)
+        # n  = n .| (d̂ .<= R)
+        # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
+
+        # distance softranks
+        # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+        # ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
+        
+        if log
+            @show ϵᵣ, ϵₓ#, ϵₛ
+        end
+
+        return ϵᵣ + param.γₓ*ϵₓ #+ param.γₛ*ϵₛ
+    end
+
+    E = (
+        train = zeros(param.N÷param.δ),
+        valid = zeros(param.N÷param.δ),
+    )
+
+    log = (n) -> begin
+        if (n-1) % param.δ == 0 
+            @show n
+
+            E.train[(n-1)÷param.δ+1] = loss(y⃗.train, I.train, true)
+            E.valid[(n-1)÷param.δ+1] = loss(y⃗.valid, I.valid, true)
+        end
+
+        nothing
+    end
+
+    train!(M, y⃗.train, I.train, loss; 
+        η   = param.η, 
+        B   = param.B, 
+        N   = param.N, 
+        log = log
+    )
+
+    return Result(param, E, M), (x=x⃗, map=ϕ) 
+end
+
+# TODO: use above function to simplify
 function run(params, niter::Int)
     println("loading data...")
 
@@ -106,7 +202,7 @@ function run(params, niter::Int)
                 D², kₙ = geodesics(ϕ(x⃗), p.kₙ).^2, p.kₙ
             end
 
-            R = ball(D², p.kₗ)
+            R = ball(D², p.kₙ)
             loss = (x, i, log) -> begin
                 z = M.pullback(x)
                 x̂ = M.pushforward(z)
@@ -117,17 +213,16 @@ function run(params, niter::Int)
                 # pairwise distances
                 D̂² = distance²(z)
                 D̄² = D²[i,i]
-                R = ball(D̄², p.kₗ)
+                # R = ball(D̄², p.kₗ)
                 
                 d = upper_tri(D̄²)
                 d̂ = upper_tri(D̂²)
 
                 # neighborhood isometry
-                n  = (d .<= R) .| (d̂ .<= R)
-                # nₑ = sum(n)
-                # n  = n .| (d̂ .<= R)
-                # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
-                ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n]))
+                n  = (d .<= R) .| (d̂ .<= R) # n  = n .| (d̂ .<= R)
+                nₑ = sum(n)
+                ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
+                # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n]))
 
                 # distance softranks
                 # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
@@ -156,7 +251,6 @@ function run(params, niter::Int)
                 nothing
             end
 
-            println("training model...")
             train!(M, y⃗.train, loss; η=p.η, B = p.B, N = p.N, log = log)
 
             results[niter*(iₚ-1)+iᵢₜ] = Result(p, E, M)
@@ -166,7 +260,7 @@ function run(params, niter::Int)
     return results, (x=x⃗, raw=scrna, genes=genes, map=ϕ) 
 end
 
-run(param...) = run(collect(param), 1)
+# run(param...) = run(collect(param), 1)
 
 function main(input, niter, output)
     params = Result[]
