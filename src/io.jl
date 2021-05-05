@@ -7,7 +7,7 @@ using Printf
 using SparseArrays
 
 export root
-export read_ply 
+export read_ply, read_obj
 export read_mtx, read_features, read_barcodes, read_matrix, expand_matrix
 
 # ------------------------------------------------------------------------
@@ -123,6 +123,32 @@ function read_ply(io::IO)
     return (
         verts = [readprops(io,field₀) for _ in 1:n₀], 
         faces = [readprops(io,field₂) for _ in 1:n₂]
+    )
+end
+
+function read_obj(io::IO)
+    bufᵥ = []
+    bufₙ = []
+    bufₜ = []
+
+    for ln in eachline(io)
+        if startswith(ln, "#") || length(ln) == 0
+            continue
+        end
+
+        w = split(ln)
+        @match w[1] begin
+            "v"  => push!(bufᵥ, [parse(Float32, x) for x in w[2:end]])
+            "vₙ" => push!(bufₙ, [parse(Float32, x) for x in w[2:end]])
+            "f"  => push!(bufₜ, [parse(Int32, split(x,"//")[1]) for x in w[2:end]])
+             _   => continue
+        end
+    end
+
+    return (
+        verts = hcat(bufᵥ...)',
+        norms = hcat(bufₙ...)',
+        faces = hcat(bufₜ...)',
     )
 end
 

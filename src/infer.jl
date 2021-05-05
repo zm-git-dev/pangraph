@@ -6,6 +6,9 @@ using LinearAlgebra, Statistics, StatsBase
 include("io.jl")
 using .DataIO
 
+include("mixtures.jl")
+using .Mixtures
+
 # ------------------------------------------------------------------------
 # exports
 

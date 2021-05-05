@@ -123,8 +123,8 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
         x̂ = M.pushforward(z)
 
         # reconstruction loss
-        ϵᵣ = (sum(sum((x.-x̂).^2, dims=2).*ω) / (vecnorm(x.*.√ω)*vecnorm(x̂.*.√ω)))*size(x,2)
-        # ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω) / size(x,2)
+        # ϵᵣ = (sum(sum((x.-x̂).^2, dims=2).*ω) / (vecnorm(x.*.√ω)*vecnorm(x̂.*.√ω)))*size(x,2)
+        ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω) / size(x,2)
 
         # pairwise distances
         D̂² = distance²(z)
@@ -136,8 +136,8 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
 
         # neighborhood isometry
         n  = (d .<= R) .| (d̂ .<= R)
-        ϵₓ = any(n) ? (sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n])))*sum(n) : 0
-        # ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0
+        # ϵₓ = any(n) ? (sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n])))*sum(n) : 0
+        ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0
 
         # nₑ = sum(n)
         # n  = n .| (d̂ .<= R)
