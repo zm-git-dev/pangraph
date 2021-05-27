@@ -560,6 +560,18 @@ function bisect(seq::Count)
     return count(subcell₁), count(subcell₂)
 end
 
+function filterbarcodes(seq::Count)
+    barcodes = open("$ROOT/barcodes") do io
+        Set([line for line ∈ eachline(io)])
+    end
+
+    seq = filtercell(seq) do _, name
+        barcode(name) ∈ barcodes
+    end
+
+    return seq
+end
+
 # ------------------------------------------------------------------------
 # synthetic data generation
 

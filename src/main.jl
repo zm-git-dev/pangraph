@@ -134,24 +134,29 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
         d = upper_tri(D̄²)
         d̂ = upper_tri(D̂²)
 
-        # neighborhood isometry
-        n  = (d .<= R) .| (d̂ .<= R)
+        # neighborhood isometry (up to scale)
+        n  = (d .<= R) #.| (d̂ .<= R)
+        ϵₓ = 1 - cov(d[n], d̂[n])/(std(d[n])*std(d̂[n]))
+
+        # ϵₓ = mean( (d .- d̂).^2 )
+        # ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0
+        # ϵₓ = sum( (d .- d̂).^2 ) / (length(d)*R^2)
         # ϵₓ = any(n) ? (sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n])))*sum(n) : 0
-        ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0
 
         # nₑ = sum(n)
         # n  = n .| (d̂ .<= R)
         # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
+        
 
         # distance softranks
-        # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
-        # ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
+        r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+        ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
         
         if log
-            @show ϵᵣ, ϵₓ#, ϵₛ
+            @show ϵᵣ, ϵₓ, ϵₛ
         end
 
-        return ϵᵣ + param.γₓ*ϵₓ #+ param.γₛ*ϵₛ
+        return ϵᵣ + param.γₓ*ϵₓ + param.γₛ*ϵₛ
     end
 
     E = (
@@ -219,21 +224,23 @@ function run(params, niter::Int)
                 d̂ = upper_tri(D̂²)
 
                 # neighborhood isometry
-                n  = (d .<= R) .| (d̂ .<= R) # n  = n .| (d̂ .<= R)
-                nₑ = sum(n)
-                ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
+                # n  = (d .<= R) .| (d̂ .<= R) # n  = n .| (d̂ .<= R)
+                # nₑ = sum(n)
+                # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
                 # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n]))
+
+                ϵₓ = sum( (d .- d̂).^2 ) / (length(d) * R^2)
 
                 # distance softranks
                 # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
-                # ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
+                # ϵₛ = 1 - cov(r, r̂)/(std(r)*std(r̂))
                 
                 if log
                     # @show sum(n)/length(n)
-                    @show ϵᵣ, ϵₓ#, ϵₛ
+                    @show ϵᵣ, ϵₓ
                 end
 
-                return ϵᵣ + p.γₓ*ϵₓ #+ p.γₛ*ϵₛ
+                return ϵᵣ + p.γₓ*ϵₓ + p.γₛ*ϵₛ
             end
 
             E = (

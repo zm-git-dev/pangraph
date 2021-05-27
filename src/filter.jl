@@ -310,9 +310,8 @@ module MLE
 
         fits = Array{FitType,1}(undef,j-1)
         for (i, row) ∈ enumerate(eachrow(data))
-            if ι[i] == 0
-                continue
-            end
+            ι[i] == 0 && continue
+
             fits[ι[i]] = fit(row,i) 
         end
 

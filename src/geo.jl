@@ -1,6 +1,7 @@
 module PointCloud
 
 using LinearAlgebra
+using PyCall
 
 import Base:
     eltype, length, minimum, take!
@@ -10,6 +11,8 @@ import ChainRulesCore:
 
 include("queue.jl")
 using .PriorityQueue
+
+Opt = pyimport("scipy.optimize")
 
 export distance², distance²!, distance, embed, upper_tri
 export neighborhood, geodesics, mds, isomap, scaling
@@ -236,12 +239,43 @@ function mds(D², dₒ)
     B = -1/2 * C*D²*C
 
     eig = eigen(B)
-    ι   = sortperm(eig.values; rev=true)
+    ι   = sortperm(real.(eig.values); rev=true)
 
     λ = eig.values[ι]
     ν = eig.vectors[:,ι]
 
     return ν[:,1:dₒ] * Diagonal(sqrt.(λ[1:dₒ]))
+end
+
+function metric_mds(D², dₒ; ξ=nothing)
+    ξ = (ξ !== nothing) ? ξ : mds(D², dₒ)
+    if dₒ > size(ξ,2)
+        error("invalid dimensions") 
+    end
+
+    function objective(x)
+        y = reshape(view(x,:), length(x)÷dₒ, dₒ)
+        δ  = 0
+        for i in 1:(size(y,1)-1)
+            for j in (i+1):size(y,1)
+                d² = sum((y[i,:] - y[j,:]).^2)
+                δ += (D²[i,j] - d²)^2
+            end
+        end
+
+        return δ
+    end
+
+    result = Opt.minimize(
+            objective,
+            reshape(ξ[:,1:dₒ], size(ξ,1)*dₒ, 1),
+            method="L-BFGS-B",
+            options=Dict(
+                "disp" => true,
+            ),
+    )
+
+    return result
 end
 
 function isomap(x, dₒ; k=12, sparse=true)

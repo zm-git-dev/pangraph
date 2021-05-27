@@ -90,7 +90,7 @@ end
 
 function projection(x)
 	n = length(x)
-	w = vec(collect(n:-1:1))
+    w = reverse(range(1/n, 1; length=n)) #vec(collect(n:-1:1))
 	ι = reverse(sortperm(x))
 	s = x[ι]
 
@@ -101,15 +101,15 @@ function projection(x)
 end
 
 rank(x)             = invperm(sortperm(x))
-softrank(x; ϵ=1e-6) = projection(x ./ ϵ)
+softrank(x; ϵ=1e-2) = projection(x ./ ϵ)
 	
-function rrule(::typeof(softrank), x; ϵ=1e-6)
+function rrule(::typeof(softrank), x; ϵ=1e-2)
 	# scale input
 	x = x ./ ϵ
 	
 	# compute value
 	n = length(x)
-	w = vec(collect(n:-1:1))
+	w = reverse(range(1/n, 1; length=n)) #vec(collect(n:-1:1))
 	ι = reverse(sortperm(x))
 	s = x[ι]
 

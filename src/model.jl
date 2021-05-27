@@ -89,13 +89,14 @@ function preprocess(x; dₒ::Union{Nothing,Int}=nothing, ϕ=(x)->x, F=nothing)
     F = isnothing(F) ? svd(X) : F
 
     # NOTE: hotpath for debugging
-    if dₒ == size(x,1)
+    #=if dₒ == size(x,1)
         return (
             data   = x,
             weight = ones(dₒ),
             map    = (x) -> x
         )
     end
+    =#
 	
 	d = F.Vt
 	μ = mean(d, dims=2)

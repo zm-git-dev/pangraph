@@ -3,6 +3,8 @@ module Mixtures
 using Roots, SpecialFunctions, StatsFuns
 using Random, Distributions, Statistics
 
+export fitmixture, EM
+
 function MLE(x; γ=missing) 
     if ismissing(γ)
         γ = ones(size(x))
@@ -38,13 +40,13 @@ function weights(γ)
 end
 
 logρ(x,α,β) = (α*log(β) - loggamma(α)) .+ (α-1).*log.(x) .- β.*x 
-ρ(x,α,β)    = exp.(logρ(x,α,β))
+ρ(x,α,β)    = (x != 0) ? exp(logρ(x,α,β)) : β^α / gamma(α)
 
 function posterior(x, Π, α, β; dropout=false)
     γ = Array{Float64, 2}(undef, length(x), length(α))
 
     for k = 1:length(α)
-        γ[:,k] = Π[k]*ρ(x, α[k], β[k])
+        γ[:,k] = Π[k]*ρ.(x, α[k], β[k])
     end
 
     if dropout
@@ -62,7 +64,7 @@ function posterior(x, Π, α, β; dropout=false)
     return γ
 end
 
-loglikelihood(x, Π, α, β) = sum(log.(sum(Π' .* hcat([ρ(x,α[k],β[k]) for k in 1:length(α)]...), dims=2)))
+loglikelihood(x, Π, α, β) = sum(log.(sum(Π' .* hcat([ρ.(x,α[k],β[k]) for k in 1:length(α)]...), dims=2)))
 
 function sample(Π, α, β, N; k=missing)
     if ismissing(k)
@@ -136,64 +138,11 @@ function cluster(x, Π, α, β; dropout=false)
     return [x[findall(χ .== k)] for k in 1:length(α)]
 end
 
-function main()
-    nₓ, gₓ = bdtnp()
-    nₛ, gₛ = scrna()
-    ϕ = mapping(gₓ, gₛ)
-
-    BIC  = zeros(10)
-    for I in 1:size(nₓ,2)
-        # regularization
-        x = nₓ[:,I] .+ 1e-8
-        x = x./maximum(x)
-
-        L, Γ = [], []
-        for k in 1:length(BIC)
-            Lₖ, Γₖ = EM(x, k)
-            push!(L,Lₖ)
-            push!(Γ,Γₖ)
-
-            println("--> final loglikelihood = $(Lₖ)")
-            BIC[k] = (3k)*log(length(x)) - Lₖ
-        end
-        k  = argmin(BIC)
-        s  = nₛ[:,ϕ[I]]
-        s /= maximum(s)
-
-        println("Minimum k = $(k)")
-
-        Cₓ = cluster(x, Γ[k]...)
-        Cₛ = cluster(s, Γ[k]..., dropout=true)
-
-        colors = [ColorSchemes.Paired_12[i] for i in 1:(k+1)]
-
-        h1 = cdfplot(x, 
-                      linecolor=colors[1],
-                      label="x-full")
-        h1 = cdfplot!(s,
-                      linestyle=:dashdot,
-                      linecolor=colors[1],
-                      label="s-full")
-
-        for (i, (cₓ,cₛ)) in enumerate(zip(Cₓ, Cₛ))
-            if length(cₓ) > 1
-                h1 = cdfplot!(cₓ,
-                              linecolor=colors[i+1],
-                              label="x-class $(i)")
-            end
-            if length(cₛ) > 1
-                h1 = cdfplot!(cₛ,
-                              linestyle=:dashdot,
-                              linecolor=colors[i+1],
-                              label="s-class $(i)")
-            end
-        end
-
-        h2 = plot(BIC)
-
-        plot(h1, h2, layout=(2,1))
-        savefig("figs/inverse/gene_{i}.png")
-    end
+# XXX: right now just returns the posteriors for component with largest mean
+function fitmixture(data)
+    _, params = EM(data.+1e-6, 2)
+    ρ = posterior(data, params...)
+    return ρ[:,2]
 end
 
 end

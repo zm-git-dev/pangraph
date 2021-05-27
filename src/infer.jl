@@ -45,7 +45,8 @@ function virtualembryo()
 
     return (
         expression = (
-            data = expression,
+            real = expression,
+            data = hcat(fitmixture.(eachcol(expression))...),
             gene = columns(genes),
         ),
         position  = positions
@@ -146,18 +147,21 @@ function cost_scan(ref, qry, ν, ω)
     ϕ = match(ref.gene, qry.gene)
     Σ = zeros(size(ref.data,1), size(qry.data,1))
 
-    # σ(x) = x
-    k    = 1
-    σ(x) = 1 ./ (1+((1-x)/x)^k)
+    # k    = 1
+    # σ(x) = 1/(1+((1-x)/x)^k)
+    σ(x) = x
 
     for i in 1:size(ref.data,2)
         isnothing(ϕ[i]) && continue
 
-        r  = ref.data[:,i]
-        q  = qry.data[:,ϕ[i]]
+        r = ref.data[:,i]
+        q = qry.data[:,ϕ[i]]
 
-        R = 2*σ.((rank(r)./length(r)).^ν[i]) .- 1
-        Q = 2*(rank(q)./length(q)) .- 1
+        # χ = σ.(rank(q)./(length(q)).^ν[i])
+
+        R = (2 .* r) .- 1
+        Q = (2 .* σ.((rank(q)./length(q)).^ν[i])) .- 1
+        # Q = (2 .* χ) .- 1
 
         Σ -= ω[i]*(R*Q')
     end
@@ -222,6 +226,7 @@ function inversion()
 
     return (
         invert=(β) -> sinkhorn(exp.(-(1 .+ β*Σ))),
+        cost=Σ,
         pointcloud = pointcloud,
     )
 end
@@ -233,12 +238,20 @@ function inversion(counts, genes; ν=nothing, ω=nothing)
         gene=columns(genes),
     )
 
-    Σ, match = 
+    Σ, ϕ = 
         if isnothing(ν) || isnothing(ω)
             cost_simple(ref, qry)
         else
             cost_scan(ref, qry, ν, ω)
         end
+
+    ψ = sinkhorn(exp.(-(1 .+ 0.5*Σ)))
+    names = collect(keys(ref.gene))
+    indx  = collect(values(ref.gene))
+    for i in 1:size(ref.real,2)
+        @show names[findfirst(indx .== i)]
+        @show cor(ref.real[:,i], ψ*qry.data[:,ϕ[i]])
+    end
 
     return (
         invert     = (β) -> sinkhorn(exp.(-(1 .+ β*Σ))),
@@ -247,7 +260,8 @@ function inversion(counts, genes; ν=nothing, ω=nothing)
             data=ref.data',
             gene=ref.gene,
         ),
-        match      = match
+        match      = match,
+        cost       = Σ,
     )
 end
 
@@ -260,14 +274,14 @@ cor(x,y) = cov(x,y) / (std(x) * std(y))
 
 function make_objective(ref, qry)
     function objective(Θ)
-        β, ν, ω = 0.1, Θ[1:84], Θ[85:end]
+        β, ν, ω = 0.5, Θ[1:84], ones(84)
         Σ, ϕ    = cost_scan(ref, qry, ν, ω)
 
-        ψ = sinkhorn(exp.(-(1 .+ β*Σ)))
+        ψ  = sinkhorn(exp.(-(1 .+ β*Σ)))
         ψ *= minimum(size(ψ))
 
         ι   = findall(.!isnothing.(ϕ))
-        db  = ref.data[:,ι]
+        db  = ref.real[:,ι]
         est = ψ*qry.data[:,ϕ[ι]]
 
         return 1-mean(cor(db[:,i], est[:,i]) for i in 1:size(db,2))
@@ -296,11 +310,12 @@ function scan_params(count, genes)
     #             )
     # )
 
+    # SearchRange=[[(0.01, 10.0) for _ ∈ 1:84]; [(0.01, 10.0) for _ ∈ 1:84]],
     return bboptimize(f, 
-                      SearchRange=[[(0.01, 100.0) for _ ∈ 1:84]; [(0.01, 100.0) for _ ∈ 1:84]], 
-                      MaxFuncEvals=5000,
-                      Method=:generating_set_search,
-                      TraceMode=:compact
+                  SearchRange=[(0.01, 10.0) for _ ∈ 1:(1*84)],
+                  MaxFuncEvals=200,
+                  Method=:generating_set_search,
+                  TraceMode=:compact
     ) #, Method=:dxnes, NThreads=Threads.nthreads(), )
 end
 
