@@ -1,7 +1,7 @@
 module PointCloud
 
 using LinearAlgebra
-using PyCall
+# using PyCall
 
 import Base:
     eltype, length, minimum, take!
@@ -12,7 +12,7 @@ import ChainRulesCore:
 include("queue.jl")
 using .PriorityQueue
 
-Opt = pyimport("scipy.optimize")
+# Opt = pyimport("scipy.optimize")
 
 export distance², distance²!, distance, embed, upper_tri
 export neighborhood, geodesics, mds, isomap, scaling
@@ -247,6 +247,7 @@ function mds(D², dₒ)
     return ν[:,1:dₒ] * Diagonal(sqrt.(λ[1:dₒ]))
 end
 
+#=
 function metric_mds(D², dₒ; ξ=nothing)
     ξ = (ξ !== nothing) ? ξ : mds(D², dₒ)
     if dₒ > size(ξ,2)
@@ -277,6 +278,7 @@ function metric_mds(D², dₒ; ξ=nothing)
 
     return result
 end
+=#
 
 function isomap(x, dₒ; k=12, sparse=true)
     G = neighborhood(x, k)
