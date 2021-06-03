@@ -43,6 +43,7 @@ Hafemeister, C. & Satija, R. (2019) claims this overfits and thus put a heuresti
 # maximum likelihood estimation
 
 module MLE
+    using ProgressMeter
     using LinearAlgebra, Statistics, StatsBase
     using GSL, Optim, NLSolversBase
     using SpecialFunctions: erfinv, loggamma
@@ -283,13 +284,13 @@ module MLE
         modelfor(x) = foundmodel(x, log.(Σ), Γ)
 
         function fit(row, i)::FitType
-            @show i
             model    = modelfor(vec(row))
             estimate = optimize(model.loss, model.constraint, model.Θ₀, IPNewton())
 
             Θ  = Optim.minimizer(estimate)
             E  = Optim.minimum(estimate)
             δΘ = diag(inv(hessian!(model.loss, Θ)))
+
             return (
                 likelihood  = E,
                 parameters  = Θ,
@@ -308,11 +309,13 @@ module MLE
             end
         end
 
-        fits = Array{FitType,1}(undef,j-1)
+        fits     = Array{FitType,1}(undef,j-1)
+        progress = Progress(sum(ι .!= 0); desc="--> fitting:")
         for (i, row) ∈ enumerate(eachrow(data))
             ι[i] == 0 && continue
 
             fits[ι[i]] = fit(row,i) 
+            next!(progress)
         end
 
         return vcat((fit.residuals' for fit ∈ fits)...),
