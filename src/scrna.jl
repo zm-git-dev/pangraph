@@ -4,7 +4,6 @@ using GSL
 using Statistics, StatsBase, Distributions
 using SpecialFunctions, Interpolations
 
-using PyCall
 using NMF, Optim, NLSolversBase, ForwardDiff
 
 import Base: 
@@ -50,8 +49,6 @@ const FitType = NamedTuple{
             Array{Float64,1}
         }
 }
-
-const NMF = pyimport("sklearn.decomposition").NMF
 
 # ------------------------------------------------------------------------
 # utility functions
@@ -490,20 +487,20 @@ function normalize(seq::Count; algo=:continuous, opt=:multmse, β̄=1.0, δβ¯�
               if opt == :simple # just fit the fractional expression to a Gamma distribution
                   float.(seq.data) * Diagonal(1 ./ d)
               else
-                  model = NMF(k, init="nndsvda", verbose=2)
-                  W = model.fit_transform(float.(seq.data) * Diagonal(1 ./ d))
-                  H = model.components_
-                  (W*H)*Diagonal(d)
-                  # r = nnmf(
-                  #           float.(seq.data) * Diagonal(1 ./ d),
-                  #           k, 
-                  #           init=:nndsvdar,
-                  #           alg=opt, 
-                  #           tol=1e-4,
-                  #           maxiter=200,
-                  #           verbose=true
-                  # )
-                  # (r.W*r.H)*Diagonal(d)
+                  # model = NMF(k, init="nndsvda", verbose=2)
+                  # W = model.fit_transform(float.(seq.data) * Diagonal(1 ./ d))
+                  # H = model.components_
+                  # (W*H)*Diagonal(d)
+                  r = nnmf(
+                            float.(seq.data) * Diagonal(1 ./ d),
+                            k, 
+                            init=:nndsvdar,
+                            alg=opt, 
+                            tol=1e-4,
+                            maxiter=200,
+                            verbose=true
+                  )
+                  (r.W*r.H)*Diagonal(d)
               end
           elseif algo == :discrete
               seq
