@@ -35,11 +35,11 @@ end
 columns(genes) = Dict(g=>i for (i,g) ∈ enumerate(genes))
 
 function virtualembryo()
-    expression, _, genes = GZip.open("$root/dvex/bdtnp.txt.gz") do io
+    expression, _, genes = GZip.open("$root/drosophila/dvex/bdtnp.txt.gz") do io
         read_matrix(io; named_cols=true)
     end
 
-    positions, _, _, = GZip.open("$root/dvex/geometry_reduced.txt.gz") do io
+    positions, _, _, = GZip.open("$root/drosophila/dvex/geometry_reduced.txt.gz") do io
         read_matrix(io; named_cols=true)
     end
 
@@ -54,7 +54,7 @@ function virtualembryo()
 end
 
 function scrna()
-    expression, genes, _ = GZip.open("$root/dvex/dge_normalized.txt.gz") do io
+    expression, genes, _ = GZip.open("$root/drosophila/dvex/dge_normalized.txt.gz") do io
         read_matrix(io; named_cols=true, named_rows=true)
     end
 
@@ -89,7 +89,7 @@ function cost(ref, qry; α=1, β=1, γ=0, ω=nothing)
         f = sum(q .== 0) / length(q)
         χ = quantile(r, f)
 
-        F₀ = cumulative(r[r.<=χ])
+        F₀ = cumulative(r[r.≤χ])
         F₊ = cumulative(r[r.>χ])
         F₌ = cumulative(q[q.>0])
 
@@ -147,6 +147,7 @@ function cost_scan(ref, qry, ν, ω)
     ϕ = match(ref.gene, qry.gene)
     Σ = zeros(size(ref.data,1), size(qry.data,1))
 
+    # XXX: try out the other option???
     # k    = 1
     # σ(x) = 1/(1+((1-x)/x)^k)
     σ(x) = x
@@ -225,8 +226,8 @@ function inversion()
     Σ, _ = cost(ref, qry; α=1.0, β=2.6, γ=0.65) # TODO: expose parameters?
 
     return (
-        invert=(β) -> sinkhorn(exp.(-(1 .+ β*Σ))),
-        cost=Σ,
+        invert = (β) -> sinkhorn(exp.(-(1 .+ β*Σ))),
+        cost = Σ,
         pointcloud = pointcloud,
     )
 end
@@ -234,8 +235,8 @@ end
 function inversion(counts, genes; ν=nothing, ω=nothing)
     ref, pointcloud = virtualembryo()
     qry = (
-        data=counts', 
-        gene=columns(genes),
+        data = counts', 
+        gene = columns(genes),
     )
 
     Σ, ϕ = 
@@ -274,7 +275,7 @@ cor(x,y) = cov(x,y) / (std(x) * std(y))
 
 function make_objective(ref, qry)
     function objective(Θ)
-        β, ν, ω = 0.5, Θ[1:84], ones(84)
+        β, ν, ω = 0.5, Θ[1:84], Θ[85:end] #ones(84)
         Σ, ϕ    = cost_scan(ref, qry, ν, ω)
 
         ψ  = sinkhorn(exp.(-(1 .+ β*Σ)))
@@ -295,8 +296,8 @@ using BlackBoxOptim
 
 function scan_params(count, genes)
     qry = (
-        data=count',
-        gene=columns(genes),
+        data = count',
+        gene = columns(genes),
     )
     ref, _ = virtualembryo()
 
@@ -310,10 +311,11 @@ function scan_params(count, genes)
     #             )
     # )
 
-    # SearchRange=[[(0.01, 10.0) for _ ∈ 1:84]; [(0.01, 10.0) for _ ∈ 1:84]],
     return bboptimize(f, 
-                  SearchRange=[(0.01, 10.0) for _ ∈ 1:(1*84)],
-                  MaxFuncEvals=200,
+                  SearchRange=[[(0.01, 10.0) for _ ∈ 1:84]; [(0.1, 2.0) for _ ∈ 1:84]],
+                  # SearchRange=[(0.01, 10.0) for _ ∈ 1:(2*84)],
+                  MaxFuncEvals=5000,
+                  # Method=:adaptive_de_rand_1_bin_radiuslimited,
                   Method=:generating_set_search,
                   TraceMode=:compact
     ) #, Method=:dxnes, NThreads=Threads.nthreads(), )

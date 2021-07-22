@@ -129,6 +129,24 @@ end
 # ------------------------------------------------------------------------
 # processing functions
 
+function filterdrosophila(data)
+    markers  = (
+        yolk = scRNA.locus(data, "sisA", "CG8129", "Corp", "CG8195", "CNT1", "ZnT77C"),
+        pole = scRNA.locus(data, "pgc"),
+        dvir = scRNA.searchloci(data, "Dvir_")
+    )
+
+    data = scRNA.filtercell(data) do cell, _
+        (sum(cell[markers.yolk]) < 10 
+      && sum(cell[markers.pole]) < 3 
+      && sum(cell[markers.dvir]) < .25*sum(cell))
+    end
+
+    scRNA.filtergene(data) do _, gene
+        !occursin("Dvir_", gene)
+    end
+end
+
 function rawdata(root::AbstractString; replicates=missing)
     X = if ismissing(replicates)
         scRNA.load(root)
@@ -136,6 +154,13 @@ function rawdata(root::AbstractString; replicates=missing)
         reduce(∪, scRNA.load("$root/$d") for d ∈ readdir(root) if occursin(replicates,d))
     end
     alert("--> raw dimensions of count matrix: $(size(X))")
+
+    # XXX: hacky
+    if occursin("drosophila",root)
+        alert("--> filtering...")
+        X = filterdrosophila(X)
+        alert("--> raw dimensions of filtered count matrix: $(size(X))")
+    end
 
     return X
 end
@@ -159,15 +184,15 @@ function fitdata(X, y)
     model = MLE.generalized_normal(logy)
     param = MLE.fit(model)
 
-    _, p = MLE.fit_glm(:negative_binomial, X; Γ=(β̄=1, δβ¯²=10, Γᵧ=param))
+    X, p = MLE.fit_glm(:negative_binomial, X; Γ=(β̄=1, δβ¯²=10, Γᵧ=param))
 
-    return p
+    return p, X
 end
 
 # ------------------------------------------------------------------------
 # main point of entry
 
-function main(root, showplot; replicates=missing)
+function main(root, showplot::Bool; replicates=missing)
     alert("> loading raw data...")
     X = rawdata(root; replicates=replicates)
     p = Plot.countmarginals(X)
@@ -175,9 +200,9 @@ function main(root, showplot; replicates=missing)
     cutoff = if showplot
         display(plot(p))
         (gene=userinput("--> cutoff for genes", 1e-2),
-         cell=userinput("--> cutoff for cells", 0.5))
+         cell=userinput("--> cutoff for cells", 0.1))
     else
-        (gene=1e-2, cell=0.5)
+        (gene=1e-2, cell=0.1)
     end
 
     alert("> filtering raw data...")
@@ -210,8 +235,8 @@ function main(root, showplot; replicates=missing)
 	end
 
     alert("> estimating posterior gene overdispersion distribution...")
-    p₁ = fitdata(X, p₀.γ)
-    jldsave("$root/proc/fit_nb.jld2"; data=X.data, gene=X.gene, cell=X.cell, p₁=p₁, p₀=p₀)
+    p₁, ρ = fitdata(X, p₀.γ)
+    save("$root/proc/fit_nb.jld2", Dict("data"=>X.data, "gene"=>X.gene, "cell"=>X.cell, "p₁"=>p₁, "p₀"=>p₀, "residual"=>ρ))
 
     p = Plot.genefits(X, p₁)
     savefig(p[1], "$root/figs/nb_α_fit.png")
@@ -224,12 +249,13 @@ function main(root, showplot; replicates=missing)
 
     alert("> estimating normalized count variance...")
     X̃, Ṽ, u², v² = let
-        V = X.*(X.+p₁.γ) ./ (1 .+ p₁.γ)
-        u², v², _ = Utility.sinkhorn(V)
+        σ² = X.*(X.+p₁.γ) ./ (1 .+ p₁.γ)
+        μ  = (p₁.γ / 2).*(.√(1 .+ 4 .* σ² ./ p₁.γ) .- 1)
+        u², v², _ = Utility.sinkhorn(σ²)
 
-        (Diagonal(.√u²) * X * Diagonal(.√v²)), (Diagonal(u²) * V * Diagonal(v²)), u², v²
+        (Diagonal(.√u²) * μ * Diagonal(.√v²)), (Diagonal(u²) * σ² * Diagonal(v²)), u², v²
     end;
-    jldsave("$root/proc/normalized_raw_count.jld2"; X̃=X̃, Ṽ=Ṽ, u²=u², v²=v², gene=X.gene, cell=X.cell)
+    save("$root/proc/normalized_raw_count.jld2", Dict("X̃"=>X̃, "Ṽ"=>Ṽ, "u²"=>u², "v²"=>v², "gene"=>X.gene, "cell"=>X.cell))
 
     alert("> estimating rank...")
     p = Plot.mpmaxeigval(X̃, svdvals(X̃))
@@ -237,7 +263,7 @@ function main(root, showplot; replicates=missing)
         display(p)
         userinput("--> desired rank", 100)
     else
-        100
+        50
 	end
     savefig(p, "$root/figs/estimated_rank.png")
 
@@ -252,7 +278,7 @@ function main(root, showplot; replicates=missing)
         u, v, _ = Utility.sinkhorn(Y)
         (Diagonal(u) * Y * Diagonal(v)), u, v
     end
-    jldsave("$root/proc/normalized_mean_count_rank_$(dim).jld2"; Ỹ=Ỹ, u=u, v=v, gene=X.gene, cell=X.cell)
+    save("$root/proc/normalized_mean_count_rank_$(dim).jld2", Dict("Ỹ"=>Ỹ, "u"=>u, "v"=>v, "gene"=>X.gene, "cell"=>X.cell))
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

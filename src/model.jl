@@ -121,7 +121,7 @@ end
 
 function model(dᵢ, dₒ; Ws=Int[], normalizes=Int[], dropouts=Int[], σ=elu)
     # check for obvious errors here
-    length(dropouts) > 0   && length(Ws) < maximum(dropouts) ≤ 0   && error("invalid dropout layer position")
+    length(dropouts)   > 0 && length(Ws) < maximum(dropouts)   ≤ 0 && error("invalid dropout layer position")
     length(normalizes) > 0 && length(Ws) < maximum(normalizes) ≤ 0 && error("invalid normalization layer position")
 
     layers = LayerIterator(
@@ -176,7 +176,7 @@ function update_dimension(model, dₒ; ϵ = 1e-6)
 end
 
 # loss function factories
-reconstruction_loss(model, Ω) = (x) -> begin
+reconstruction_loss(model, Ω) = (x) -> let
     x̂ = model.identity(x)
     return sum(ω*mse(x[i,:], x̂[i,:]) for (i,ω) in enumerate(Ω))
 end

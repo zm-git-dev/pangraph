@@ -130,25 +130,25 @@ struct Graph{T <: Real}
     verts :: Array{Vertex{T}, 1}
     edges :: Array{Edge{T}, 1}
 end
-Graph(verts::Array{Vertex{T},1}) where T <: Real = Graph{T}(verts, [])
+Graph(verts :: Array{Vertex{T},1}) where T <: Real = Graph{T}(verts, [])
 
-length(G::Graph) = length(G.verts)
+length(G :: Graph) = length(G.verts)
 
 # ------------------------------------------------------------------------
 # operations
 
-function neighborhood(x, k::Int; D=missing)
+function neighborhood(x, k :: Int; D=missing, accept=(d)->true)
     D = ismissing(D) ? distance(x) : D
     G = Graph([Vertex(x[:,i]) for i ∈ 1:size(x,2)])
     for i ∈ 1:size(D,1)
         neighbor = sortperm(D[i,:])[2:end]
-        append!(G.edges, [Edge((i,j), D[i,j]) for j ∈ neighbor[1:k]])
+        append!(G.edges, [Edge((i,j), D[i,j]) for j ∈ neighbor[1:k] if accept(D[i,j])])
     end
 
     return G
 end
 
-function adjacency_list(G::Graph)
+function adjacency_list(G :: Graph)
     adj = [ Tuple{Int, Float64}[] for v ∈ 1:length(G.verts) ]
     for e ∈ G.edges
         v₁, v₂ = e.verts
@@ -182,7 +182,7 @@ function dijkstra!(dist, adj, src)
     end
 end
 
-function floyd_warshall(G::Graph)
+function floyd_warshall(G :: Graph)
     V = length(G.verts)
     D = fill(∞, (V,V))
     # remove diagonal
@@ -213,7 +213,7 @@ function floyd_warshall(G::Graph)
     return D
 end
 
-function geodesics(G::Graph; sparse=true)
+function geodesics(G :: Graph; sparse=true)
     if sparse
         adj  = adjacency_list(G)
         dist = zeros(length(G), length(G))
@@ -228,7 +228,7 @@ function geodesics(G::Graph; sparse=true)
     end
 end
 
-geodesics(x, k; D=missing, sparse=true) = geodesics(neighborhood(x, k; D=D); sparse=sparse)
+geodesics(x, k; D=missing, accept=(d)->true, sparse=true) = geodesics(neighborhood(x, k; D=D, accept=accept); sparse=sparse)
 
 # ------------------------------------------------------------------------
 # non ml dimensional reduction

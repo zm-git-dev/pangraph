@@ -84,7 +84,8 @@ var(x)     = mean((x.-mean(x)).^2)
 std(x)     = sqrt(var(x))
 cov(x,y)   = mean((x.-mean(x)) .* (y.-mean(y)))
 
-ball(D, k) = mean(sort(view(D,:,i))[k+1] for i in 1:size(D,2))
+# ball(D, k) = mean(sort(view(D,:,i))[k+1] for i in 1:size(D,2))
+ball(D, k) = [ sort(view(D,:,i))[k+1] for i in 1:size(D,2) ]
 
 # ------------------------------------------------------------------------
 # i/o
@@ -118,6 +119,13 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
     R          = ball(D², param.kₙ)
     vecnorm(x) = sum(norm.(eachcol(x)))
 
+    function localcorrelation(d,d̄,R)
+        n = (d .<= R) .& (d .> 0)
+        c = (sum(n) > 1) ? (1 - cov(d[n], d̄[n])/(std(d[n])*std(d̄[n])))/2 : 1/2
+
+        return c
+    end
+
     loss = (x, i, log) -> begin
         z = M.pullback(x)
         x̂ = M.pushforward(z)
@@ -134,9 +142,10 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
         d = upper_tri(D̄²)
         d̂ = upper_tri(D̂²)
 
-        # neighborhood isometry (up to scale)
-        n  = (d .<= R) #.| (d̂ .<= R)
-        ϵₓ = 1 - cov(d[n], d̂[n])/(std(d[n])*std(d̂[n]))
+        # neighborhood isometry (up to scale - variable for each point)
+        # n  = (d .<= R) #.| (d̂ .<= R)
+        # ϵₓ = 1 - cov(d[n], d̂[n])/(std(d[n])*std(d̂[n]))
+        ϵₓ = mean(localcorrelation(D̄²[:,j], D̂²[:,j], R[i[j]]) for j ∈ 1:size(D̂²,1))
 
         # ϵₓ = mean( (d .- d̂).^2 )
         # ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0

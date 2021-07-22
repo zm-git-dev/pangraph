@@ -628,7 +628,7 @@ end
 # ------------------------------------------------------------------------
 # point of entry for testing
 
-const ROOT = "/home/nolln/root/data/seqspace/raw"
+const ROOT = "/home/nolln/root/data/seqspace/drosophila"
 
 process(seq) = begin
     markers  = (

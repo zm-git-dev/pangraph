@@ -176,8 +176,8 @@ end
 # manifold type
 
 struct Manifold{T <: Real}
-    mesh::Mesh{T}
-    surf::Surface{T}
+    mesh :: Mesh{T}
+    surf :: Surface{T}
 end
 
 function pullback(ℳ::Manifold)
