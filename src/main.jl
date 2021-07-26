@@ -119,8 +119,8 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
     R          = ball(D², param.kₙ)
     vecnorm(x) = sum(norm.(eachcol(x)))
 
-    function localcorrelation(d,d̄,R)
-        n = (d .<= R) .& (d .> 0)
+    function localcorrelation(d,d̄,R,R̄)
+        n = ((d .<= R) .& (d .> 0)) .| ((d̄ .<= R̄) .& (d̄ .> 0))
         c = (sum(n) > 1) ? (1 - cov(d[n], d̄[n])/(std(d[n])*std(d̄[n])))/2 : 1/2
 
         return c
@@ -142,10 +142,12 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
         d = upper_tri(D̄²)
         d̂ = upper_tri(D̂²)
 
+        R̂  = mean(d̂) .* R[i] ./ mean(d) # convert units of ball size to latent space
+
         # neighborhood isometry (up to scale - variable for each point)
         # n  = (d .<= R) #.| (d̂ .<= R)
         # ϵₓ = 1 - cov(d[n], d̂[n])/(std(d[n])*std(d̂[n]))
-        ϵₓ = mean(localcorrelation(D̄²[:,j], D̂²[:,j], R[i[j]]) for j ∈ 1:size(D̂²,1))
+        ϵₓ = mean(localcorrelation(D̄²[:,j], D̂²[:,j], R[i[j]], R̂[j]) for j ∈ 1:size(D̂²,1))
 
         # ϵₓ = mean( (d .- d̂).^2 )
         # ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0

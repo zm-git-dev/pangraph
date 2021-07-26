@@ -202,7 +202,7 @@ function main(root, showplot::Bool; replicates=missing)
         (gene=userinput("--> cutoff for genes", 1e-2),
          cell=userinput("--> cutoff for cells", 0.1))
     else
-        (gene=1e-2, cell=0.1)
+        (gene=1e-2, cell=1.0)
     end
 
     alert("> filtering raw data...")
@@ -250,10 +250,9 @@ function main(root, showplot::Bool; replicates=missing)
     alert("> estimating normalized count variance...")
     X̃, Ṽ, u², v² = let
         σ² = X.*(X.+p₁.γ) ./ (1 .+ p₁.γ)
-        μ  = (p₁.γ / 2).*(.√(1 .+ 4 .* σ² ./ p₁.γ) .- 1)
         u², v², _ = Utility.sinkhorn(σ²)
 
-        (Diagonal(.√u²) * μ * Diagonal(.√v²)), (Diagonal(u²) * σ² * Diagonal(v²)), u², v²
+        (Diagonal(.√u²) * X * Diagonal(.√v²)), (Diagonal(u²) * σ² * Diagonal(v²)), u², v²
     end;
     save("$root/proc/normalized_raw_count.jld2", Dict("X̃"=>X̃, "Ṽ"=>Ṽ, "u²"=>u², "v²"=>v², "gene"=>X.gene, "cell"=>X.cell))
 
@@ -269,7 +268,7 @@ function main(root, showplot::Bool; replicates=missing)
 
     alert("> estimating mean count matrix...")
     Y = let d = dim 
-        r = nnmf(X̃, d; alg=:multmse)
+        r = nnmf(X̃, d; alg=:cd)
         r.W*r.H
     end 
     alert("--> variance captured by dimensional reduction: $(cor(Y[:], X̃[:]))")
@@ -282,7 +281,6 @@ function main(root, showplot::Bool; replicates=missing)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    # root = "/home/nolln/root/data/seqspace/neuraltube/day2_dorsal"
     root = ARGS[1]
     !isdir(root) && error("directory $root not found")
     if length(ARGS) == 1
