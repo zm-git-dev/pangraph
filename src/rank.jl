@@ -9,7 +9,7 @@ function partition(x; ϵ=1e-9)
 		return eltype(x)[]
 	end
 	
-	sizes = [1]
+	sizes = Int[1]
 	for i in 2:length(x)
 		if abs(x[i] - x[i-1]) > ϵ
 			append!(sizes, 0)
@@ -109,7 +109,7 @@ function rrule(::typeof(softrank), x; ϵ=1e-2)
 	
 	# compute value
 	n = length(x)
-	w = reverse(range(1/n, 1; length=n)) #vec(collect(n:-1:1))
+	w = reverse(range(1/n, 1; length=n))
 	ι = reverse(sortperm(x))
 	s = x[ι]
 
@@ -117,7 +117,7 @@ function rrule(::typeof(softrank), x; ϵ=1e-2)
 	primal = s .- dual
 	
 	ι¯¹ = invperm(ι)	
-	return primal[ι¯¹], (∇) -> (NO_FIELDS, ∇ .- ∇isotonic(dual, ∇)[ι¯¹])
+    return primal[ι¯¹], (∇) -> (NO_FIELDS, (∇ .- ∇isotonic(dual, ∇[ι])[ι¯¹]) ./ ϵ)
 end
 
 end

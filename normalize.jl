@@ -199,10 +199,10 @@ function main(root, showplot::Bool; replicates=missing)
     savefig(p, "$root/figs/raw_count_marginals.png")
     cutoff = if showplot
         display(plot(p))
-        (gene=userinput("--> cutoff for genes", 1e-2),
-         cell=userinput("--> cutoff for cells", 0.1))
+        (gene=userinput("--> cutoff for genes", 5e-3),
+         cell=userinput("--> cutoff for cells", 0.5))
     else
-        (gene=1e-2, cell=1.0)
+        (gene=5e-3, cell=0.5)
     end
 
     alert("> filtering raw data...")

@@ -3,7 +3,8 @@ module SeqSpace
 using GZip
 using BSON: @save
 using LinearAlgebra: norm
-using Flux
+using Statistics: quantile
+using Flux, Zygote
 
 import BSON
 
@@ -37,9 +38,10 @@ struct HyperParams
     kₗ :: Int          # average number of neighbors to impose isometry on 
     γₓ :: Float64      # prefactor of neighborhood isometry loss
     γₛ :: Float64      # prefactor of distance soft rank loss
+    γₙ :: Float64      # prefactor 
 end
 
-HyperParams(; dₒ=3, Ws=Int[], BN=Int[], DO=Int[], N=500, δ=5, η=5e-4, B=64, V=81, kₙ=12, kₗ=3, γₓ=1e-4, γₛ=1) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γₓ, γₛ)
+HyperParams(; dₒ=3, Ws=Int[], BN=Int[], DO=Int[], N=500, δ=5, η=5e-4, B=64, V=81, kₙ=12, kₗ=3, γₓ=1e-4, γₛ=1, γₙ=5000) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γₓ, γₛ, γₙ)
 
 struct Result
     param :: HyperParams
@@ -96,7 +98,6 @@ ball(D, k) = [ sort(view(D,:,i))[k+1] for i in 1:size(D,2) ]
 function load(io)
     database = BSON.parse(io)
     result, input = database[:result], database[:in]
-
 end
 
 # ------------------------------------------------------------------------
@@ -119,37 +120,51 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
     R          = ball(D², param.kₙ)
     vecnorm(x) = sum(norm.(eachcol(x)))
 
-    function localcorrelation(d,d̄,R,R̄)
-        n = ((d .<= R) .& (d .> 0)) .| ((d̄ .<= R̄) .& (d̄ .> 0))
+    function localcorrelation(d,d̄,R)
+        n = ((d .<= R) .& (d .> 0)) #.| ((d̄ .<= R̄) .& (d̄ .> 0))
         c = (sum(n) > 1) ? (1 - cov(d[n], d̄[n])/(std(d[n])*std(d̄[n])))/2 : 1/2
 
         return c
     end
 
+    fermi(x,N) = 1 / (1 + exp(2*param.kₗ*(x-(param.kₗ+1)/N)))
+
+    Lₛ = 10
+    xₛ = Lₛ*(rand(param.dₒ,5000) .- .5)
+    Dₛ = sort(PointCloud.upper_tri(PointCloud.distance(xₛ)))
+    dq = Dict{Int,Vector}()
+    function distance_quantiles(N)
+        if N ∉ keys(dq)
+            dq[N] = [quantile(Dₛ, i/N; sorted=true) for i in 1:N]
+        end
+        return dq[N]
+    end
+
+    # TODO: clean this up!
     loss = (x, i, log) -> begin
         z = M.pullback(x)
         x̂ = M.pushforward(z)
 
         # reconstruction loss
         # ϵᵣ = (sum(sum((x.-x̂).^2, dims=2).*ω) / (vecnorm(x.*.√ω)*vecnorm(x̂.*.√ω)))*size(x,2)
-        ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω) / size(x,2)
+        # ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω) / size(x,2)
+        ϵᵣ = sum(sum((x.-x̂).^2, dims=2)) / sum(sum(x.^2,dims=2))
 
         # pairwise distances
         D̂² = distance²(z)
         D̄² = D²[i,i]
         # R = ball(D̄², param.kₗ)
         
-        d = upper_tri(D̄²)
+        # d = upper_tri(D̄²)
         d̂ = upper_tri(D̂²)
 
-        R̂  = mean(d̂) .* R[i] ./ mean(d) # convert units of ball size to latent space
-
+        # R̂  = mean(d̂) .* R[i] ./ mean(d) # convert units of ball size to latent space
         # neighborhood isometry (up to scale - variable for each point)
         # n  = (d .<= R) #.| (d̂ .<= R)
         # ϵₓ = 1 - cov(d[n], d̂[n])/(std(d[n])*std(d̂[n]))
-        ϵₓ = mean(localcorrelation(D̄²[:,j], D̂²[:,j], R[i[j]], R̂[j]) for j ∈ 1:size(D̂²,1))
+        # ϵₓ = mean(localcorrelation(D̄²[:,j], D̂²[:,j], R[i[j]]) for j ∈ 1:size(D̂²,1))
 
-        # ϵₓ = mean( (d .- d̂).^2 )
+        # ϵₓ = mean( (d .- d̂).^2 ) / (mean(R[i])^2)
         # ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0
         # ϵₓ = sum( (d .- d̂).^2 ) / (length(d)*R^2)
         # ϵₓ = any(n) ? (sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n])))*sum(n) : 0
@@ -158,17 +173,44 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
         # n  = n .| (d̂ .<= R)
         # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
         
+        # ϵₓ = mean(sum(z.^2,dims=1))
+        # ϵₓ = mean(
+        #     let
+        #         zₛ = sort(z[i,:])
+        #         mean( ( (2*i/length(zₛ)-1) - s/10)^2 for (i,s) in enumerate(zₛ) )
+        #     end for i ∈ 1:size(z,1)
+        # )
 
-        # distance softranks
-        r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
-        ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
-        
-        if log
-            @show ϵᵣ, ϵₓ, ϵₛ
+        ϵₓ = let
+            dₛ = sort(.√d̂)
+            qd = Zygote.dropgrad(distance_quantiles(length(dₛ)))
+            mean( (dₛ .- qd).^2 ) / Lₛ^2
         end
 
-        return ϵᵣ + param.γₓ*ϵₓ + param.γₛ*ϵₛ
-    end
+        # distance softranks
+        # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+        # ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
+        ϵₛ = mean(
+            let
+                d, d̂ = D̄²[:,j], D̂²[:,j]
+                r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+                1 - cov(r, r̂)/(std(r)*std(r̂))
+            end for j ∈ 1:size(D̂²,2)
+        )
+        # ϵₛ = (1+param.kₗ) - mean(
+        #     let
+        #         d, d̂ = D̄²[:,j], D̂²[:,j]
+        #         r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+        #         sum(fermi.(r, size(x,2)) .* fermi.(r̂, size(x,2)))
+        #     end for j ∈ 1:size(D̂²,2)
+        # )
+        
+        if log
+            @show ϵᵣ, ϵₛ, ϵₓ #, ϵₙ
+        end
+
+        return ϵᵣ + param.γₛ*ϵₛ + param.γₓ*ϵₓ #+ 1*ϵₙ
+     end
 
     E = (
         train = zeros(param.N÷param.δ),
@@ -193,7 +235,8 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
         log = log
     )
 
-    return Result(param, E, M), (x=x⃗, map=ϕ) 
+    return Result(param, E, M), (x=x⃗, map=ϕ, y=y⃗, I=I, D=Dₛ)
+)
 end
 
 # TODO: use above function to simplify
