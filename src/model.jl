@@ -25,7 +25,8 @@ struct LayerIterator
     width     :: Array{Int}
     dropout   :: Set{Int}
     normalize :: Set{Int}
-    σᵢₒ       :: Function # activation on input/output layers
+    σᵢ        :: Function # activation on input layers
+    σₒ        :: Function # activation on output layers
     σ         :: Function # activation on latent layers
 end
 
@@ -34,14 +35,15 @@ reverse(it::LayerIterator) = LayerIterator(
                                 reverse(it.width),
                                 Set(length(it.width) - i - 1 for i in it.dropout),
                                 Set(length(it.width) - i - 1 for i in it.normalize),
-                                it.σᵢₒ,
+                                it.σᵢ,
+                                it.σᵢ, # intentional -> want to make output = input
                                 it.σ,
                              )
 
 function iterate(it::LayerIterator)
     w₁ = it.width[1]
     w₂ = it.width[2]
-    f  = Dense(w₁, w₂, it.σᵢₒ) |> gpu
+    f  = Dense(w₁, w₂, it.σᵢ) |> gpu
 
     return f, (
         index     = 2,
@@ -68,7 +70,7 @@ function iterate(it::LayerIterator, state)
                 w₂ = it.width[state.index+1]
 
                 i  = state.index+1
-                f  = Dense(w₁, w₂, i == length(it.width) ? it.σᵢₒ : it.σ) |> gpu
+                f  = Dense(w₁, w₂, i == length(it.width) ? it.σₒ : it.σ) |> gpu
 
                 f, (
                      index     = i,
@@ -128,7 +130,7 @@ function model(dᵢ, dₒ; Ws=Int[], normalizes=Int[], dropouts=Int[], σ=elu)
                 [dᵢ; Ws; dₒ], 
                 Set(dropouts),
                 Set(normalizes), 
-                σ₀, σ
+                σ₀, tanh, σ
              )
 
     F   = Chain(layers...)

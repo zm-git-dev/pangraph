@@ -12,6 +12,8 @@ include("geo.jl")
 include("io.jl")
 include("rank.jl")
 include("model.jl")
+include("hilbert.jl")
+include("voronoi.jl")
 
 using .PointCloud, .DataIO, .SoftRank, .ML
 
@@ -24,7 +26,7 @@ export run
 # ------------------------------------------------------------------------
 # types
 
-struct HyperParams
+mutable struct HyperParams
     dₒ :: Int          # output dimensionality
     Ws :: Array{Int,1} # (latent) layer widths
     BN :: Array{Int,1} # (latent) layers followed by batch normalization
@@ -100,6 +102,139 @@ function load(io)
     result, input = database[:result], database[:in]
 end
 
+function buildloss(model, D², param)
+    clamp(x) = if x > 1
+        1
+    elseif x < 0
+        0
+    else
+        x
+    end
+    #=
+    # Lₛ = 20
+    # xₛ = Lₛ*(rand(param.dₒ,7500) .- .5)
+    # Dₛ = sort(PointCloud.upper_tri(PointCloud.distance(xₛ)))
+    # dq = Dict{Int,Vector}()
+    # function distance_quantiles(N)
+    #     if N ∉ keys(dq)
+    #         dq[N] = [quantile(Dₛ, i/N; sorted=true) for i in 1:N]
+    #     end
+    #     return dq[N]
+    # end
+    
+    N  = 10
+    Δs = range(-1,+1,length=N)
+    Δ  = [((Δs[i],Δs[i+1]), (Δs[j],Δs[j+1])) for i in 1:(N-1), j in 1:(N-1)]
+    
+    rect = Rectangle(Point2(-1,-1), Point2(+1,+1))
+    =#
+
+    (x, i, log) -> begin
+        z = model.pullback(x)
+        x̂ = model.pushforward(z)
+
+        # reconstruction loss
+        ϵᵣ = sum(sum((x.-x̂).^2, dims=2)) / sum(sum(x.^2,dims=2))
+
+        # pairwise distances
+        D̂² = distance²(z)
+        D̄² = D²[i,i]
+        
+        # d = upper_tri(D̄²)
+        # d̂ = upper_tri(D̂²)
+
+        #=
+        ϵₓ = mean(
+            let
+                zₛ = sort(z[d,:])
+                mean( ( (2*i/length(zₛ)-1) - s)^2 for (i,s) in enumerate(zₛ) )
+            end for d ∈ 1:min(2,size(z,1))
+        )
+        =#
+        # ϵₓ = let
+        #     zₛ = Hilbert.sort(z)
+        #     z₀ = Zygote.dropgrad(Hilbert.positions(range(0,1,length=size(z,2))))
+        #     (mean(sum((zₛ .- z₀).^2, dims=1)) + mean(
+        #         let
+        #             zₛ = sort(z[d,:])
+        #             mean( ( (2*i/length(zₛ)-1) - s)^2 for (i,s) in enumerate(zₛ) )
+        #         end for d ∈ 1:min(2,size(z,1))
+        #    ))
+        # end
+        # FIXME: allow for higher dimensionality than 2
+        ϵₓ = let
+            a = Voronoi.areas(z[1:2,:])
+            # mean((length(a)*a/4 .- 1).^2)
+            std(a) / mean(a) + mean(
+                # FIXME: remove when we can compute volumes in d > 2
+                let
+                    zₛ = sort(z[d,:])
+                    mean( ( (2*i/length(zₛ)-1) - s)^2 for (i,s) in enumerate(zₛ) )
+                end for d ∈ 3:size(z,1)
+            )
+        end
+        # ϵₓ = mean(
+        #     let
+        #         zₛ = sort(z[d,:])
+        #         maximum( 
+        #             let
+        #                 f = (i-1)/(size(z,2)-1)
+        #                 if s < -10
+        #                     f
+        #                 elseif s > 10
+        #                     1-f
+        #                 else
+        #                     abs((s+10)/(2*10) - f)
+        #                 end
+        #             end for (i,s) in enumerate(zₛ) 
+        #         )
+        #     end for d ∈ 1:min(2,size(z,1))
+        # )
+
+        # ϵₙ = let
+        #     dₛ = sort(.√d̂)
+        #     qd = Zygote.dropgrad(distance_quantiles(length(dₛ)))
+        #     mean( (dₛ .- qd).^2 ) / Lₛ^2
+        # end
+        
+        # ϵₙ = 1 - cov(d̂, d)/(std(d̂)*std(d))
+
+        # ϵₙ = mean(
+        #     let
+        #         d, d̂ = D̄²[:,j], D̂²[:,j]
+        #         f    = 20/length(d)
+        #         n, n̂ = softrank(d ./ mean(d)) .≤ f, softrank(d̂ ./ mean(d̂)) .≤ f
+        #         sum(n) + sum(n̂) - 2*sum(n.*n̂)
+        #     end for j ∈ 1:size(D̂²,2)
+        # )
+        
+        # distance softranks
+        # ϵₙ = let
+        #     r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+        #     1 - cov(r, r̂)/(std(r)*std(r̂))
+        # end
+        ϵₛ = mean(
+            let
+                d, d̂ = D̄²[:,j], D̂²[:,j]
+                r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
+                1 - cov(r, r̂)/(std(r)*std(r̂))
+            end for j ∈ 1:size(D̂²,2)
+        )
+
+        # ϵₛ = std([sum( (δ[1][1] .≤ z[1,:] .≤ δ[1][2]) .& (δ[2][1] .≤ z[2,:] .≤ δ[2][2])) for δ in Δ]) / size(z,2)
+        # ϵₛ = let
+        #     x = Point2.(z[1,:], z[2,:])
+        #     std(voronoiarea(voronoicells(x,rect)))
+        # end
+        
+        if log
+            @show ϵᵣ, ϵₛ, ϵₓ
+        end
+
+        return ϵᵣ + param.γₛ*ϵₛ + param.γₓ*ϵₓ #+ param.γₙ*ϵₙ
+     end
+end
+
 # ------------------------------------------------------------------------
 # main functions
 
@@ -120,109 +255,18 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
     R          = ball(D², param.kₙ)
     vecnorm(x) = sum(norm.(eachcol(x)))
 
-    function localcorrelation(d,d̄,R)
-        n = ((d .<= R) .& (d .> 0)) #.| ((d̄ .<= R̄) .& (d̄ .> 0))
-        c = (sum(n) > 1) ? (1 - cov(d[n], d̄[n])/(std(d[n])*std(d̄[n])))/2 : 1/2
-
-        return c
-    end
-
-    fermi(x,N) = 1 / (1 + exp(2*param.kₗ*(x-(param.kₗ+1)/N)))
-
-    Lₛ = 10
-    xₛ = Lₛ*(rand(param.dₒ,5000) .- .5)
-    Dₛ = sort(PointCloud.upper_tri(PointCloud.distance(xₛ)))
-    dq = Dict{Int,Vector}()
-    function distance_quantiles(N)
-        if N ∉ keys(dq)
-            dq[N] = [quantile(Dₛ, i/N; sorted=true) for i in 1:N]
-        end
-        return dq[N]
-    end
-
-    # TODO: clean this up!
-    loss = (x, i, log) -> begin
-        z = M.pullback(x)
-        x̂ = M.pushforward(z)
-
-        # reconstruction loss
-        # ϵᵣ = (sum(sum((x.-x̂).^2, dims=2).*ω) / (vecnorm(x.*.√ω)*vecnorm(x̂.*.√ω)))*size(x,2)
-        # ϵᵣ = sum(sum((x.-x̂).^2, dims=2).*ω) / size(x,2)
-        ϵᵣ = sum(sum((x.-x̂).^2, dims=2)) / sum(sum(x.^2,dims=2))
-
-        # pairwise distances
-        D̂² = distance²(z)
-        D̄² = D²[i,i]
-        # R = ball(D̄², param.kₗ)
-        
-        # d = upper_tri(D̄²)
-        d̂ = upper_tri(D̂²)
-
-        # R̂  = mean(d̂) .* R[i] ./ mean(d) # convert units of ball size to latent space
-        # neighborhood isometry (up to scale - variable for each point)
-        # n  = (d .<= R) #.| (d̂ .<= R)
-        # ϵₓ = 1 - cov(d[n], d̂[n])/(std(d[n])*std(d̂[n]))
-        # ϵₓ = mean(localcorrelation(D̄²[:,j], D̂²[:,j], R[i[j]]) for j ∈ 1:size(D̂²,1))
-
-        # ϵₓ = mean( (d .- d̂).^2 ) / (mean(R[i])^2)
-        # ϵₓ = any(n) ? sum( (d[n] .- d̂[n]).^2 ) / (sum(n)*R^2) : 0
-        # ϵₓ = sum( (d .- d̂).^2 ) / (length(d)*R^2)
-        # ϵₓ = any(n) ? (sum( (d[n] .- d̂[n]).^2 ) / (sum(d[n])*sum(d̂[n])))*sum(n) : 0
-
-        # nₑ = sum(n)
-        # n  = n .| (d̂ .<= R)
-        # ϵₓ = sum( (d[n] .- d̂[n]).^2 ) / (nₑ * R^2)
-        
-        # ϵₓ = mean(sum(z.^2,dims=1))
-        # ϵₓ = mean(
-        #     let
-        #         zₛ = sort(z[i,:])
-        #         mean( ( (2*i/length(zₛ)-1) - s/10)^2 for (i,s) in enumerate(zₛ) )
-        #     end for i ∈ 1:size(z,1)
-        # )
-
-        ϵₓ = let
-            dₛ = sort(.√d̂)
-            qd = Zygote.dropgrad(distance_quantiles(length(dₛ)))
-            mean( (dₛ .- qd).^2 ) / Lₛ^2
-        end
-
-        # distance softranks
-        # r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
-        # ϵₛ   = 1 - cov(r, r̂)/(std(r)*std(r̂))
-        ϵₛ = mean(
-            let
-                d, d̂ = D̄²[:,j], D̂²[:,j]
-                r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
-                1 - cov(r, r̂)/(std(r)*std(r̂))
-            end for j ∈ 1:size(D̂²,2)
-        )
-        # ϵₛ = (1+param.kₗ) - mean(
-        #     let
-        #         d, d̂ = D̄²[:,j], D̂²[:,j]
-        #         r, r̂ = softrank(d ./ mean(d)), softrank(d̂ ./ mean(d̂))
-        #         sum(fermi.(r, size(x,2)) .* fermi.(r̂, size(x,2)))
-        #     end for j ∈ 1:size(D̂²,2)
-        # )
-        
-        if log
-            @show ϵᵣ, ϵₛ, ϵₓ #, ϵₙ
-        end
-
-        return ϵᵣ + param.γₛ*ϵₛ + param.γₓ*ϵₓ #+ 1*ϵₙ
-     end
-
-    E = (
-        train = zeros(param.N÷param.δ),
-        valid = zeros(param.N÷param.δ),
+    loss = buildloss(M, D², param)
+    E    = (
+        train = Float64[],
+        valid = Float64[]
     )
 
     log = (n) -> begin
         if (n-1) % param.δ == 0 
             @show n
 
-            E.train[(n-1)÷param.δ+1] = loss(y⃗.train, I.train, true)
-            E.valid[(n-1)÷param.δ+1] = loss(y⃗.valid, I.valid, true)
+            push!(E.train,loss(y⃗.train, I.train, true))
+            push!(E.valid,loss(y⃗.valid, I.valid, true))
         end
 
         nothing
@@ -235,8 +279,19 @@ function run(data, genes, param; D²=nothing, F=nothing, dₒ=35)
         log = log
     )
 
-    return Result(param, E, M), (x=x⃗, map=ϕ, y=y⃗, I=I, D=Dₛ)
-)
+    return Result(param, E, M), (x=x⃗, map=ϕ, y=y⃗, index=I, D²=D², log=log)
+end
+
+function continuerun(result::Result, input, epochs)
+    loss = buildloss(result.model, input.D², result.param)
+    train!(result.model, input.y.train, input.index.train, loss; 
+        η   = result.param.η, 
+        B   = result.param.B, 
+        N   = epochs,
+        log = input.log
+    )
+
+    return result, input
 end
 
 # TODO: use above function to simplify

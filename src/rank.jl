@@ -120,4 +120,70 @@ function rrule(::typeof(softrank), x; ϵ=1e-2)
     return primal[ι¯¹], (∇) -> (NO_FIELDS, (∇ .- ∇isotonic(dual, ∇[ι])[ι¯¹]) ./ ϵ)
 end
 
+# FIXME: topological flips are wrong!!
+
+function hsplit!(r, i, δx, δy, ι, n)
+    x₀ = (δx.hi + δx.lo) / 2
+
+    lo = findall(r[1,:] .≤ x₀)
+    hi = findall(r[1,:] .> x₀)
+
+    @show lo, hi
+
+    # left partition
+    if length(lo) > 1
+        n = vsplit!(r[:,lo], i[lo], (lo=δx.lo,hi=x₀), δy, ι, n)
+    elseif length(lo) == 1
+        ι[i[lo[1]]] = n
+        n += 1
+    end
+
+    # right partition
+    if length(hi) > 1
+        n = vsplit!(r[:,hi], i[hi], (lo=x₀,hi=δx.hi), δy, ι, n)
+    elseif length(hi) == 1
+        ι[i[hi[1]]] = n
+        n += 1
+    end
+
+    return n
+end
+
+function vsplit!(r, i, δx, δy, ι, n)
+    y₀ = (δy.hi + δy.lo) / 2
+
+    lo = findall(r[2,:] .≤ y₀)
+    hi = findall(r[2,:] .> y₀)
+
+    @show lo, hi
+
+    # left partition
+    if length(lo) > 1
+        n = hsplit!(r[:,lo], i[lo], δx, (lo=δy.lo,hi=y₀), ι, n)
+    elseif length(lo) == 1
+        ι[i[lo[1]]] = n
+        n += 1
+    end
+
+    # right partition
+    if length(hi) > 1
+        n = hsplit!(r[:,hi], i[hi], δx, (lo=y₀,hi=δy.hi), ι, n)
+    elseif length(hi) == 1
+        ι[i[hi[1]]] = n
+        n += 1
+    end
+
+    return n
+end
+
+# NOTE: assumes 2D
+#       assumes coordinates fall between -1 and +1
+function hilbert(r)
+    ι = zeros(Int, size(r,2))
+    i = collect(1:size(r,2))
+    n = hsplit!(r, i, (lo=-1.0,hi=+1.0), (lo=-1.0,hi=+1.0), ι, 1)
+
+    return ι
+end
+
 end
