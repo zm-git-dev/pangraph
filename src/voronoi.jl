@@ -74,13 +74,6 @@ function rrule(::typeof(areas), x)
         ∂x = zeros(size(x))
 
         for (i,t) in enumerate(eachcol(triangulation))
-            #=
-            A = (q[1,t[2]]-q[1,t[1]])*∂a[i]*s[i]
-            B = (q[2,t[3]]-q[2,t[2]])*∂a[i]*s[i]
-            C = (q[2,t[2]]-q[2,t[1]])*∂a[i]*s[i]
-            D = (q[1,t[3]]-q[1,t[2]])*∂a[i]*s[i]
-            =#
-
             if t[1] > NB
                 ∂x[1,t[1]-NB] += (q[2,t[2]]-q[2,t[3]])*∂a[i]*s[i]
                 ∂x[2,t[1]-NB] -= (q[1,t[2]]-q[1,t[3]])*∂a[i]*s[i]

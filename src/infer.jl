@@ -10,11 +10,6 @@ include("mixtures.jl")
 using .Mixtures
 
 # ------------------------------------------------------------------------
-# exports
-
-export virtualembryo
-
-# ------------------------------------------------------------------------
 # globals
 
 Maybe{T} = Union{T, Missing}
@@ -356,7 +351,6 @@ function make_objective(ref, qry)
     return objective
 end
 
-# using Optim
 using BlackBoxOptim
 
 function scan_params(qry)
@@ -379,14 +373,6 @@ function scan_params(count, genes)
     ref, _ = virtualembryo()
 
     f = make_objective(ref,qry)
-
-    # return optimize(f, zeros(1+84), fill(100.0, 1+84), [0.1; ones(84)], SAMIN(;rt=0.9,verbosity=1), 
-    #             Optim.Options(
-    #                 show_trace=true,
-    #                 show_every=5,
-    #                 iterations=200,
-    #             )
-    # )
 
     return bboptimize(f, 
                   SearchRange=[[(0.01, 10.0) for _ ∈ 1:84]; [(0.1, 2.0) for _ ∈ 1:84]],
