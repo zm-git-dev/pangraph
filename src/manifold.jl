@@ -1,4 +1,4 @@
-module DiffGeo
+module DifferentialGeometry
 
 using Match
 using LinearAlgebra, Polynomials, Statistics
