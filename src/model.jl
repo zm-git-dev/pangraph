@@ -83,42 +83,6 @@ function iterate(it::LayerIterator, state)
 end
 
 # ------------------------------------------------------------------------
-# data scaling / preprocessing
-
-# x is assumed to be dᵢ x N shaped
-function preprocess(x; dₒ::Union{Nothing,Int}=nothing, ϕ=(x)->x, F=nothing)
-    X = gpu(x)
-    F = isnothing(F) ? svd(X) : F
-
-    # NOTE: hotpath for debugging
-    if dₒ == size(x,1)
-        μ = mean(x, dims=2)
-        return (
-            data   = x .- μ,
-            weight = ones(dₒ),
-            map    = (x) -> x .+ μ
-        )
-    end
-	
-	d = F.Vt
-	μ = mean(d, dims=2)
-	σ = std(d, dims=2)
-	
-    λ = ϕ.(F.S)
-    λ = λ ./ sum(λ)
-	
-    if isnothing(dₒ)
-        dₒ = size(d,1)
-    end
-
-	return (
-        data   = (d[1:dₒ,:] .- μ[1:dₒ]) ./ σ[1:dₒ], 
-        weight = λ[1:dₒ], 
-        map    = (x) -> (F.U[:,1:dₒ] * Diagonal(F.S[1:dₒ])) * ((σ[1:dₒ]) .* x .+ μ[1:dₒ])
-    )
-end
-
-# ------------------------------------------------------------------------
 # functions
 
 function model(dᵢ, dₒ; Ws=Int[], normalizes=Int[], dropouts=Int[], σ=elu)
