@@ -18,9 +18,6 @@ import LinearAlgebra:
 include("io.jl")
 using .DataIO: read_mtx, read_barcodes, read_features
 
-# include("filter.jl")
-# using .DataFilter
-
 export barcodes, genes
 
 # ------------------------------------------------------------------------

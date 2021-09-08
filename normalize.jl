@@ -4,16 +4,11 @@ using Distributions, Statistics, StatsBase
 using Plots
 
 include("src/scrna.jl")
-using .scRNA
-
-include("src/filter.jl")
-using .DataFilter
-
+include("src/mle.jl")
 include("src/util.jl")
-using .Utility
-
 include("src/geo.jl")
-using .PointCloud
+
+using .scRNA, .Utility, .PointCloud
 
 # ------------------------------------------------------------------------
 # printing functions
