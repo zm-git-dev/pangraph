@@ -137,12 +137,23 @@ length(G :: Graph) = length(G.verts)
 # ------------------------------------------------------------------------
 # operations
 
-function neighborhood(x, k :: Int; D=missing, accept=(d)->true)
+function neighborhood(x, k :: T; D=missing, accept=(d)->true) where T <: Integer
     D = ismissing(D) ? distance(x) : D
     G = Graph([Vertex(x[:,i]) for i ∈ 1:size(x,2)])
     for i ∈ 1:size(D,1)
         neighbor = sortperm(D[i,:])[2:end]
         append!(G.edges, [Edge((i,j), D[i,j]) for j ∈ neighbor[1:k] if accept(D[i,j])])
+    end
+
+    return G
+end
+
+function neighborhood(x, k :: T; D=missing, accept=(d)->true) where T <: AbstractFloat
+    D = ismissing(D) ? distance(x) : D
+    G = Graph([Vertex(x[:,i]) for i ∈ 1:size(x,2)])
+    for i ∈ 1:size(D,1)
+        neighbor = first.(findall(0 .< D[:,i] .< k))
+        append!(G.edges, [Edge((i,j), D[i,j]) for j ∈ neighbor if accept(D[i,j])])
     end
 
     return G
