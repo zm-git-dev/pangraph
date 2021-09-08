@@ -37,12 +37,11 @@ mutable struct HyperParams
     B  :: Int          # batch size
     V  :: Int          # number of points to partition for validation
     k :: Int           # number of neighbors to use to estimate geodesics
-    γₓ :: Float64      # prefactor of neighborhood isometry loss
-    γₛ :: Float64      # prefactor of distance soft rank loss
-    γₙ :: Float64      # prefactor 
+    γᵤ :: Float64      # prefactor of uniform density loss
+    γᵣ :: Float64      # prefactor of distance soft rank loss
 end
 
-HyperParams(; dₒ=3, Ws=Int[], BN=Int[], DO=Int[], N=500, δ=5, η=5e-4, B=64, V=81, kₙ=12, kₗ=3, γₓ=1e-4, γₛ=1, γₙ=5000) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, kₙ, kₗ, γₓ, γₛ, γₙ)
+HyperParams(; dₒ=3, Ws=Int[], BN=Int[], DO=Int[], N=500, δ=5, η=5e-4, B=64, V=81, k=12, γᵤ=1, γᵣ=1) = HyperParams(dₒ, Ws, BN, DO, N, δ, η, B, V, k, γᵤ, γᵣ)
 
 struct Result
     param :: HyperParams
