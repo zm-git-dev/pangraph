@@ -16,6 +16,9 @@ import LinearAlgebra:
     svd, diag, Diagonal, AbstractMatrix
 
 include("io.jl")
+include("mle.jl")
+include("util.jl")
+
 using .DataIO: read_mtx, read_barcodes, read_features
 
 export barcodes, genes
@@ -283,277 +286,6 @@ function filtercell(f, seq::Count)
     return seq[:,ι]
 end
 
-# ------------------------------------------------------------------------
-# normalization
-
-function negbinom1_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
-	function f(Θ)
-		α, β, γ = Θ
-		
-		Mu = (exp(+α + β*g) for g ∈ ḡ)
-        G₁ = (loggamma(x+γ*μ) - loggamma(x+1) - loggamma(γ*μ) for (x,μ) ∈ zip(x⃗,Mu))
-        G₂ = (x*log(γ) - (x+γ*μ)*log(1+γ) for (x,μ) ∈ zip(x⃗,Mu) )
-
-        return -mean(g₁+g₂ for (g₁,g₂) ∈ zip(G₁,G₂)) + 0.5*δβ¯²*(β-β̄)^2
-	end
-	
-	return f
-end
-
-function negbinom2_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
-	function f(Θ)
-		α, β, γ = Θ
-		
-		G₁ = (loggamma(x+γ) - loggamma(x+1) - loggamma(γ) for x ∈ x⃗)
-		G₂ = (x*(α + β*g)-(x+γ)*log(exp(α+β*g) + γ) for (x,g) ∈ zip(x⃗,ḡ))
-
-        return -mean(g₁+g₂+γ*log(γ) for (g₁,g₂) ∈ zip(G₁,G₂)) + 0.5*δβ¯²*(β-β̄)^2
-	end
-	
-	function ∂f!(∂Θ, Θ)
-		α, β, γ = Θ
-		
-		Mu 	 = (exp(+α + β*g) for g ∈ ḡ)
-		Mu¯¹ = (exp(-α - β*g) for g ∈ ḡ)
-
-		G₁ = (x-((γ+x)/(1+γ*μ¯¹)) for (x,μ¯¹) ∈ zip(x⃗,Mu¯¹))
-		G₂ = (digamma(x+γ)-digamma(γ)+log(γ)+1-log(γ+μ)-(x+γ)/(γ+μ) for (x,μ) ∈ zip(x⃗,Mu))
-
-		∂Θ[1] = -mean(G₁)
-        ∂Θ[2] = -mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ)) + δβ¯²*(β-β̄)
-		∂Θ[3] = -mean(G₂)
-	end
-	
-	function ∂²f!(∂²Θ, Θ)
-		α, β, γ = Θ
-		
-		Mu 	 = (exp(+α + β*g) for g ∈ ḡ)
-		Mu¯¹ = (exp(-α - β*g) for g ∈ ḡ)
-
-		G₁ = (γ*μ¯¹*(γ+x)/(1+γ*μ¯¹).^2 for (x,μ¯¹) ∈ zip(x⃗,Mu¯¹))
-		G₂ = (μ+γ for μ ∈ Mu)
-		G₃ = (μ*((γ+x)/g₂^2 - 1/g₂ ) for (x,μ,g₂) ∈ zip(x⃗,Mu,G₂))
-		G₄ = (trigamma(x+γ)-trigamma(γ)+1/γ-2/g₂+(γ+x)/g₂^2 for (x,g₂) ∈ zip(x⃗,G₂))
-
-		# α,β submatrix
-		∂²Θ[1,1] = mean(G₁)
-		∂²Θ[1,2] = ∂²Θ[2,1] = mean(g₁*g for (g₁,g) ∈ zip(G₁,ḡ))
-		∂²Θ[2,2] = mean(g₁*g^2 for (g₁,g) ∈ zip(G₁,ḡ)) + δβ¯²
-		
-		# γ row/column
-		∂²Θ[3,3] = -mean(G₄)
-		∂²Θ[3,1] = ∂²Θ[1,3] = -mean(G₃)
-		∂²Θ[3,2] = ∂²Θ[2,3] = -mean(g₃*g for (g₃, g) ∈ zip(G₃,ḡ))
-	end
-	
-	return f, ∂f!, ∂²f!
-end
-
-function gamma_loss(x⃗, ḡ, β̄::Float64, δβ¯²::Float64)
-	function f(Θ)
-		α, β, γ = Θ
-		
-        M = (exp(α+β*g) for g ∈ ḡ)
-        Z = (loggamma(μ/γ)+(μ/γ)*log(γ) for μ ∈ M)  
-
-        return -mean(-z + (μ/γ-1)*log(x)-x/γ for (z,μ,x) ∈ zip(Z,M,x⃗)) + 0.5*δβ¯²*(β-β̄)^2
-	end
-
-    # TODO: write out gradients by hand?
-    return f
-end
-
-
-# Fits cell-specific parameters / gene
-#
-# input parameters are:
-# x    => vector of genes to fit
-# ḡ    => average gene expression for given cell
-# β̄    => mean of prior on β
-# δβ¯² => mean of prior of β
-function fit_continuous(x, ḡ, β̄, δβ¯²)::FitType
-	μ  = mean(x)
-	Θ₀ = [
-		log(μ),
-		β̄,
-		μ^2 / (var(x)-μ),
-	]
-	
-    if Θ₀[end] < 0 || isinf(Θ₀[end])
-        Θ₀[end] = 1
-	end
-	
-	loss = 	TwiceDifferentiable(
-        gamma_loss(x, ḡ, β̄, δβ¯²),
-		Θ₀;
-        autodiff=:forward
-	)
-	
-	constraint = TwiceDifferentiableConstraints(
-		[-∞, -∞, 0],
-		[+∞, +∞, +∞],
-	)
-
-	soln = optimize(loss, constraint, Θ₀, IPNewton())
-	
-	Θ̂  = Optim.minimizer(soln)
-	Ê  = Optim.minimum(soln)
-	δΘ̂ = diag(inv(hessian!(loss, Θ̂)))
-	
-	# pearson residuals
-	α̂, β̂, γ̂ = Θ̂
-	μ̂ = exp.(α̂ .+ β̂*ḡ)
-	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
-
-    # cdf
-    k   = μ̂ ./ γ̂
-    cdf = gammainc.(k, x./γ̂)
-
-    # gaussian residuals
-    ρ = erfinv.(2 .*cdf .- 1)
-    ρ[isinf.(ρ)] = 10*sign.(ρ[isinf.(ρ)])
-	
-	return (
-		parameters=Θ̂, 
-		uncertainty=δΘ̂, 
-		likelihood=Ê,
-		trend=μ̂,
-        cdf=cdf,
-		residuals=ρ,
-	)
-end
-
-function fit_discrete(x, ḡ, β̄, δβ¯²)::FitType
-	μ  = mean(x)
-	Θ₀ = [
-		log(μ),
-		β̄,
-		μ^2 / (var(x)-μ),
-	]
-	
-    if Θ₀[end] < 0 || isinf(Θ₀[end])
-        Θ₀[end] = 1
-	end
-	
-	loss = 	TwiceDifferentiable(
-        negbinom2_loss(x, ḡ, β̄, δβ¯²)...,
-		Θ₀
-	)
-	
-	constraint = TwiceDifferentiableConstraints(
-		[-∞, -∞, 0],
-		[+∞, +∞, +∞],
-	)
-
-	soln = optimize(loss, constraint, Θ₀, IPNewton())
-	
-	Θ̂  = Optim.minimizer(soln)
-	Ê  = Optim.minimum(soln)
-	δΘ̂ = diag(inv(hessian!(loss, Θ̂)))
-	
-	# pearson residuals
-	α̂, β̂, γ̂ = Θ̂
-	μ̂ = exp.(α̂ .+ β̂*ḡ)
-	σ̂ = .√(μ̂ .+ μ̂.^2 ./ γ̂)
-    ρ = (x .- μ̂) ./ σ̂
-
-    # cdf
-    p = μ̂./(μ̂.+γ̂)
-    p[p .< 0] .= 0
-    p[p .> 1] .= 1
-    cdf = 1 .- betainc.(x.+1.0, γ̂, p)
-
-	return (
-		parameters=Θ̂, 
-		uncertainty=δΘ̂, 
-		likelihood=Ê,
-		trend=μ̂,
-        cdf=cdf,
-		residuals=ρ,
-	)
-end
-
-
-# input parameters are:
-# β̄    => mean of prior on β₁ (cell-specific count)
-# δβ¯² => uncertainty of prior on β₁ (cell-specific count)
-function normalize(seq::Count; algo=:continuous, opt=:multmse, β̄=1.0, δβ¯²=1e-2, k=500)
-    ḡ   = log.(vec(mean(seq, dims=1)))
-    est = if algo == :continuous
-              d = float.(vec(sum(seq.data,dims=1)))
-              if opt == :simple # just fit the fractional expression to a Gamma distribution
-                  float.(seq.data) * Diagonal(1 ./ d)
-              else
-                  # model = NMF(k, init="nndsvda", verbose=2)
-                  # W = model.fit_transform(float.(seq.data) * Diagonal(1 ./ d))
-                  # H = model.components_
-                  # (W*H)*Diagonal(d)
-                  r = nnmf(
-                            float.(seq.data) * Diagonal(1 ./ d),
-                            k, 
-                            init=:nndsvdar,
-                            alg=opt, 
-                            tol=1e-4,
-                            maxiter=200,
-                            verbose=true
-                  )
-                  (r.W*r.H)*Diagonal(d)
-              end
-          elseif algo == :discrete
-              seq
-          else
-              error("expected algo to be either 'discrete' or 'continuous', received '$algo'")
-          end
-
-    fits = Array{FitType,1}(undef, ngenes(seq))
-    if algo == :continuous
-        Threads.@threads for i ∈ 1:ngenes(seq)
-            fits[i] = fit_continuous(vec(est[i,:]), ḡ, β̄, δβ¯²)
-        end
-    else # already checked that algo is one of two options
-        Threads.@threads for i ∈ 1:ngenes(seq)
-            fits[i] = fit_discrete(vec(est[i,:]), ḡ, β̄, δβ¯²)
-        end
-    end
-
-    return Count(vcat((fit.residuals' for fit ∈ fits)...), seq.gene, seq.cell),
-        (
-            likelihood  = map((f)->f.likelihood,  fits),
-
-            α  = map((f)->f.parameters[1],  fits),
-            β  = map((f)->f.parameters[2],  fits),
-            γ  = map((f)->f.parameters[3],  fits),
-
-            δα = map((f)->f.uncertainty[1], fits),
-            δβ = map((f)->f.uncertainty[2], fits),
-            δγ = map((f)->f.uncertainty[3], fits),
-
-            raw = [vec(seq.data[i,:]) for i in 1:size(seq.data,1)],
-            cdf = map((f)->f.cdf, fits),
-
-            μ̂ = map((f)->f.trend,  fits),
-            χ = vec(mean(est, dims=2)),
-            M = vec(maximum(est, dims=2))
-        )
-end
-
-function bisect(seq::Count)
-    population(cell)  = reduce(vcat, [vec([g for _ in 1:n]) for (g,n) in enumerate(cell)])
-    put!(cell, index) = for i ∈ index cell[i] += 1 end
-
-    subcell₁ = zeros(eltype(seq.data), size(seq.data))
-    subcell₂ = zeros(eltype(seq.data), size(seq.data))
-
-    for c in 1:size(seq,2)
-        N = sum(seq.data[:,c])
-        put!(view(subcell₁,:,c), sample(population(seq.data[:,c]), N÷2; replace=false))
-        subcell₂[:,c] = seq.data[:,c] - subcell₁[:,c]
-    end
-
-    count(data) = Count(data, seq.gene, seq.cell)
-    return count(subcell₁), count(subcell₂)
-end
-
 function filterbarcodes(seq::Count)
     barcodes = open("$ROOT/barcodes") do io
         Set([line for line ∈ eachline(io)])
@@ -564,6 +296,52 @@ function filterbarcodes(seq::Count)
     end
 
     return seq
+end
+
+# ------------------------------------------------------------------------
+# normalization
+
+function normalize(seq::Count; β₀=1, δβ¯²=10)
+    _, p = MLE.fit_glm(:negative_binomial, seq; 
+        Γ=(β̄=β₀, δβ¯²=δβ¯², Γᵧ=nothing),
+        run=(x) -> mean(x) > 1			
+    )
+
+    logγ = log.(p.γ)
+
+    model = MLE.generalized_normal(logγ)
+    param = MLE.fit(model)
+
+    _, p = MLE.fit_glm(:negative_binomial, seq; 
+       Γ=(β̄=β₀, δβ¯²=δβ¯², Γᵧ=param)
+    )
+
+    X, u, v = let
+        σ² = X.*(X.+p.γ) ./ (1 .+ p.γ)
+        u², v², _ = Utility.sinkhorn(σ²)
+
+        (Diagonal(.√u²) * seq * Diagonal(.√v²)), .√u², .√v²
+    end
+
+    d = sum(λ .> (sqrt(size(X,1))+sqrt(size(X,2)))) + 10
+    Y = let
+        F = svd(X)
+        F.U[:,1:d]*Diagonal(F.S[1:d])*F.Vt[1:d,:]
+    end
+
+    r, c, _ = Utility.sinkhorn(Y)
+    Z = Diagonal(r)*Y*Diagonal(c)
+
+    return (
+        normalized = Count(Z, seq.cell, seq.gene),
+        transform = (norm) -> let 
+            seq = Diagonal(1./(r.*.u)) * norm * Diagonal(1./(c.*v))
+            depth = sum(seq,dims=1)
+            scale = mean(vec(depth))
+
+            scale * (seq ./ depth)
+        end
+    )
 end
 
 # ------------------------------------------------------------------------
@@ -592,14 +370,6 @@ function generate(ngene, ncell; ρ=(α=Gamma(0.25,2), β=Normal(1,.01), γ=Gamma
         p⃗[p⃗ .< 0] .= 0
         p⃗[p⃗ .> 1] .= 1
         cdf[g,:] = 1 .- betainc.(vec(seq[g,:]).+1.0, γ[g], p⃗)
-
-        #=
-        for (c,p) ∈ enumerate(p⃗) 
-            pmf(x) = exp.(loggamma.(x .+ γ[g]) .- loggamma.(x .+ 1) .- loggamma(γ[g]) + x.*log.(p) .+ γ[g].*log.(1 .- p))
-            F(x) = sum(pmf(y) for y ∈ 0:x)
-            cdf[g,c] = F(seq[g,c])
-        end
-        =#
     end
 
     # filter out any rows that don't express in at least one cell
@@ -624,9 +394,8 @@ end
 
 # ------------------------------------------------------------------------
 # point of entry for testing
-
-const ROOT = "/home/nolln/root/data/seqspace/drosophila"
-
+# const ROOT = "/home/nolln/root/data/seqspace/drosophila"
+#=
 process(seq) = begin
     markers  = (
         yolk = locus(seq, "sisA", "CG8129", "Corp", "CG8195", "CNT1", "ZnT77C"),
@@ -683,5 +452,6 @@ function test()
     seq = Count(log10.(maximum(sum(seq,dims=1)) .* seq ./ sum(seq, dims=1) .+ 1), seq.gene, seq.cell)
     return seq, nothing
 end
+=#
 
 end
