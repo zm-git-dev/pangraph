@@ -5,16 +5,151 @@ using Rematch
 # ------------------------------------------------------------------------
 # types
 
-struct Tree
-    name   :: String
-    dist   :: Float64
-    parent :: Union{Tree,Nothing}
-    child  :: Array{Tree,1}
-
-    data
+mutable struct Tree
+    name     :: String
+    comment  :: String
+    distance :: Float64
+    support  :: Float64
+    parent   :: Union{Tree,Nothing}
+    child    :: Array{Tree,1}
 end
+Tree() = Tree("", "", 0, nothing, Tree[])
+Tree(parent::Tree) = Tree("", "", 0, parent, Tree[])
 
 # input/output
+
+struct Token
+    type :: Char
+    data
+end
+Token(type) = Token(type, nothing)
+
+const lexicon = Set{Char}(['(', ')', '[', ']', ',', ';', ':'])
+
+function isidentchar(c::Char)
+    return (
+        c == '!' || c == '\\' ||
+        ('\"' < c < '\'')     ||
+        (')' < c < '+')       ||
+        (',' < c < ':')       ||
+        (':' < c < '[')       ||
+        (']' < c ≤ '~')
+    )
+end
+
+function lex(io::IO)::Token
+    buffer = IOBuffer()
+    letter = peek(io, Char)
+
+    # space
+    if letter |> isspace
+        while letter |> isspace
+            write(buffer, read(io, Char))
+            letter = peek(io, Char)
+        end
+
+        return Token(' ', String(take!(buffer)))
+    end
+
+    # simple tokens
+    letter ∉ lexicon || return Token(letter)
+
+    # quoted identifier
+    if letter == '"'
+        read(io, Char) # eat quote
+        letter = read(io, Char)
+
+        while letter != '"'
+            write(buffer, letter)
+            letter = read(io, Char)
+        end
+
+        return Token('$', String(take!(buffer)))
+    end
+
+    # number
+    if letter == '.' || isdigit(letter)
+    @label NUMBER
+        write(buffer, read(io, Char))
+        letter = peek(io, Char)
+
+        while letter |> isdigit
+            write(buffer, read(io, Char))
+            letter = peek(io, Char)
+        end
+
+        letter != '.' || @goto NUMBER
+        letter |> isidentchar && @goto IDENTIFIER
+
+        return Token('#',parse(String(take!(buffer)), Float64))
+    end
+
+    # identifier
+    @label IDENTIFIER
+    while letter |> isidentchar
+        write(buffer, read(io, Char))
+        letter = peek(io, Char)
+    end
+    return Token('$', String(take!(buffer)))
+end
+
+function lex!(io::IO)::Token
+    token = lex(io)
+    while token.type == ' '
+        token = lex(io)
+    end
+    return token
+end
+
+function read(io::IO, parent::Tree)
+    node = parent
+    while true
+        token = lex!(io)
+        @match token.type begin
+            '(' => let
+                global node = Tree(parent)
+                push!(parent.child, node)
+                token = read(io, node)
+                token.kind == ')' || error("syntax error: expected closing paren, found $(token)")
+            end
+            ')' => let
+                error("syntax error: unexpected closing paren found")
+            end
+            '[' => let
+                error("syntax error: newick comments not supported")
+            end
+            ']' => let
+                error("syntax error: unexpected closing bracket found")
+            end
+            ':' => let
+                token = lex!(io)
+                token.kind == '#' || error("syntax error: expected number following ':'")
+                node !== nothing  || error("syntax error: setting distance of nil node")
+
+                node.distance = token.data
+            end
+            ',' => let
+                global node = nothing
+            end
+            ';' => let
+            end
+            '$' => let
+            end
+            '#' => let
+            end
+             _  => error("unrecognized token type: $(token.type)")
+        end
+    end
+end
+
+function read(io::IO)
+    root = Tree()
+    read(io, root)
+    return root
+end
+
+function write(io::IO)
+end
 
 # ------------------------------------------------------------------------
 # methods
