@@ -19,7 +19,8 @@ export align
 # helper functions
 
 function log(msg...)
-    println(stderr, now(), " ", join(msg, " ")...)
+    # println(stderr, now(), " ", join(msg, " ")...)
+    println(stderr, join(msg, " ")...)
     flush(stderr)
 end
 
@@ -393,7 +394,7 @@ The _lower_ the score, the _better_ the alignment. Only negative energies are co
 `minblock` is the minimum size block that will be produced from the algorithm.
 `maxiter` is maximum number of duplications that will be considered during this alignment.
 """
-function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Function, verify::Function, verbose::Bool; maxiter=100, sensitivity="asm10")
+function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Function, verify::Function, verbose::Bool; maxiter=100, sensitivity="asm10", dirtag=nothing)
     G₀ = G₁
 
     for niter in 1:maxiter
@@ -435,6 +436,14 @@ function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Funct
         detransitive!(G₀)
         purge!(G₀)
         prune!(G₀)
+
+        if dirtag !== nothing
+            finalize!(G₀)
+            open("$(dirtag)_$(niter).json", "w") do io
+                marshal_json(io, G₀)
+            end
+        end
+
     end
 
     return G₀
@@ -638,57 +647,59 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
     tree = ordering(compare, Gs...) |> balance
     log("--> tree: ", tree)
 
-    meter = Progress(length(tree); desc="alignment progress", output=stderr)
     tips  = Dict{String,Graph}(collect(keys(G.sequence))[1] => G for G in Gs)
 
     log("--> aligning pairs")
 
-    events = Channel{Bool}(10);
 
-    @spawn let
-        while isopen(events)
-            take!(events)
-            next!(meter)
-        end
-    end
-
-    error_channel = Channel(1)
+    Gν = 0
+    dir = mkpath("graphs_1")
 
     G = nothing
     for clade ∈ postorder(tree)
-        @spawn try
-            if isleaf(clade)
-                close(clade.graph)
-                put!(clade.parent.graph, tips[clade.name])
-                put!(events, true)
-            else
-                Gₗ = take!(clade.graph)
-                Gᵣ = take!(clade.graph)
-                close(clade.graph)
-
-                G₀ = align_pair(Gₗ, Gᵣ, energy, minblock, aligner, verify, false)
-                G₀ = align_self(G₀, energy, minblock, aligner, verify, false)
-
-                put!(events, true)
-                if clade.parent !== nothing
-                    put!(clade.parent.graph, G₀)
-                else
-                    G = G₀
-                    close(error_channel)
-                end
+        if isleaf(clade)
+            close(clade.graph)
+            put!(clade.parent.graph, tips[clade.name])
+            log("--> passing leaf $(clade.name)")
+        else
+            Gₗ = take!(clade.graph)
+            Gᵣ = take!(clade.graph)
+            close(clade.graph)
+            log("--> merging graphs : merge-id $(Gν)")
+            log("--> blocks $(length(Gₗ.block)) + $(length(Gᵣ.block))")
+            log("--> paths $(length(Gₗ.sequence)) + $(length(Gᵣ.sequence))")
+            
+            finalize!(Gₗ)
+            open("$dir/graphs_$(Gν)_l.json", "w") do io
+                marshal_json(io, Gₗ)
             end
-        catch err
-            put!(error_channel, [err, catch_backtrace()])
-            close(error_channel)
+            finalize!(Gᵣ)
+            open("$dir/graphs_$(Gν)_r.json", "w") do io
+                marshal_json(io, Gᵣ)
+            end
+
+            G₀ = align_pair(Gₗ, Gᵣ, energy, minblock, aligner, verify, true)
+            log("--> aligned graph pairs, blocks = $(length(G₀.block))")
+            finalize!(G₀)
+            open("$dir/graphs_$(Gν)_pair.json", "w") do io
+                marshal_json(io, G₀)
+            end
+            G₀ = align_self(G₀, energy, minblock, aligner, verify, true, dirtag="$dir/graphs_$(Gν)_self")
+            log("--> self-aligned graphs, blocks = $(length(G₀.block)), paths = $(length(G₀.sequence))")
+            finalize!(G₀)
+            open("$dir/graphs_$(Gν)_self.json", "w") do io
+                marshal_json(io, G₀)
+            end
+
+            Gν += 1
+
+            if clade.parent !== nothing
+                put!(clade.parent.graph, G₀)
+            else
+                G = G₀
+            end
         end
     end
-
-    for (err, backtrace) in error_channel
-        @error "In-thread error during graph building:" exception=(err, backtrace)
-        error("graph construction failed, see above for stacktrace")
-    end
-
-    close(events)
 
     return G
 end

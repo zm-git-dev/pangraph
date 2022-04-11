@@ -4,6 +4,8 @@ import ..PanGraph: PanContigs, Alignment
 import ..PanGraph.Graphs.Utility: read_paf, write_fasta, uncigar
 import ..PanGraph.Graphs.Shell: execute
 
+using Random
+
 export align
 
 """
@@ -53,58 +55,52 @@ Align homologous regions of `qry` and `ref`.
 Returns the list of intervals between pancontigs.
 """
 function align(ref::PanContigs, qry::PanContigs)
+    dir = "wfmash_1/" * randstring(10)
+    mkpath(dir)
+    println(stderr, "wfmash dir: $dir")
+    flush(stderr)
     if ref != qry
-        hits = mktempdir() do dir
-            open("$dir/qry.fa","w") do io
-                for (name, seq) in zip(qry.name, qry.sequence)
-                    if length(seq) ≥ 95
-                        write_fasta(io, name, seq)
-                    end
+        open("$dir/qry.fa","w") do io
+            for (name, seq) in zip(qry.name, qry.sequence)
+                if length(seq) ≥ 95
+                    write_fasta(io, name, seq)
                 end
             end
-
-            open("$dir/ref.fa","w") do io
-                for (name, seq) in zip(ref.name, ref.sequence)
-                    if length(seq) ≥ 95
-                        write_fasta(io, name, seq)
-                    end
-                end
-            end
-
-            run(`samtools faidx $dir/ref.fa`)
-            run(`samtools faidx $dir/qry.fa`)
-            run(pipeline(`wfmash $dir/ref.fa $dir/qry.fa`,
-                stdout="$dir/aln.paf",
-                stderr="$dir/err.log"
-               )
-            )
-
-            open(read_paf, "$dir/aln.paf")
         end
 
-        return map(recigar!, hits)
+        open("$dir/ref.fa","w") do io
+            for (name, seq) in zip(ref.name, ref.sequence)
+                if length(seq) ≥ 95
+                    write_fasta(io, name, seq)
+                end
+            end
+        end
+
+        run(`samtools faidx $dir/ref.fa`)
+        run(`samtools faidx $dir/qry.fa`)
+        run(pipeline(`wfmash $dir/ref.fa $dir/qry.fa`,
+            stdout="$dir/aln.paf",
+            stderr="$dir/err.log"
+            )
+        )
     else
-        hits = mktempdir() do dir
-            open("$dir/seq.fa","w") do io
-                for (name, seq) in zip(qry.name, qry.sequence)
-                    if length(seq) ≥ 95
-                        write_fasta(io, name, seq)
-                    end
+        open("$dir/seq.fa","w") do io
+            for (name, seq) in zip(qry.name, qry.sequence)
+                if length(seq) ≥ 95
+                    write_fasta(io, name, seq)
                 end
             end
-
-            run(`samtools faidx $dir/seq.fa`)
-            run(pipeline(`wfmash -X $dir/seq.fa $dir/seq.fa`,
-                stdout="$dir/aln.paf",
-                stderr="$dir/err.log"
-               )
-            )
-
-            open(read_paf, "$dir/aln.paf")
         end
 
-        return map(recigar!, hits)
+        run(`samtools faidx $dir/seq.fa`)
+        run(pipeline(`wfmash -X $dir/seq.fa $dir/seq.fa`,
+            stdout="$dir/aln.paf",
+            stderr="$dir/err.log"
+            )
+            )
     end
+    hits = open(read_paf, "$dir/aln.paf")
+    return map(recigar!, hits)
 end
 
 end

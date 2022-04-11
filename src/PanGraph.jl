@@ -157,6 +157,9 @@ function main(args)
         return 2
     end
 
+    println(stderr, "=== seeding random number generator ===")
+    flush(stderr)
+    seed!(1)
     return run(Dispatch, parse(Dispatch, args))
 end
 
