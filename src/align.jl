@@ -3,6 +3,7 @@ module Align
 using Rematch, Dates
 using LinearAlgebra
 using ProgressMeter
+using Infiltrator
 
 using Base.Threads: @spawn, @threads
 
@@ -362,17 +363,31 @@ end
 # TODO: make thread safe
 function align_kernel(matches, minblock, replace!, verbose)
     blocks   = Array{Array{Block,1},1}(undef, length(matches))
+
     for (i, match) in enumerate(matches)
         # destructure precomputed hit
         hit,qry,ref,qry₀,ref₀,strand = match
 
         verbose && log(hit)
 
+        is_culprit = (qry.uuid=="HGGRWCOMSB") | (ref.uuid=="HGGRWCOMSB")
+        # is_culprit = true
+        is_culprit && log("cigar bef: ", hit.cigar)
+
         enforce_cutoff!(hit, minblock)
+
+        is_culprit && log("cigar aft: ", hit.cigar)
+        # @infiltrate is_culprit
+
         blks = combine(qry, ref, hit; minblock=minblock)
+        
+        # @infiltrate is_culprit
+        
+        # is_culprit && log(blks)
 
         qrys = map(b -> b.block, filter(b -> b.kind != :ref, blks))
         refs = map(b -> b.block, filter(b -> b.kind != :qry, blks))
+
 
         replace!((qry=qry₀, ref=ref₀), (qry=qrys, ref=refs), strand)
 
@@ -653,7 +668,7 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
 
 
     Gν = 0
-    dir = mkpath("graphs_1")
+    dir = mkpath("graphs_3")
 
     G = nothing
     for clade ∈ postorder(tree)
@@ -669,27 +684,27 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
             log("--> blocks $(length(Gₗ.block)) + $(length(Gᵣ.block))")
             log("--> paths $(length(Gₗ.sequence)) + $(length(Gᵣ.sequence))")
             
-            finalize!(Gₗ)
-            open("$dir/graphs_$(Gν)_l.json", "w") do io
-                marshal_json(io, Gₗ)
-            end
-            finalize!(Gᵣ)
-            open("$dir/graphs_$(Gν)_r.json", "w") do io
-                marshal_json(io, Gᵣ)
-            end
+            # finalize!(Gₗ)
+            # open("$dir/graphs_$(Gν)_l.json", "w") do io
+            #     marshal_json(io, Gₗ)
+            # end
+            # finalize!(Gᵣ)
+            # open("$dir/graphs_$(Gν)_r.json", "w") do io
+            #     marshal_json(io, Gᵣ)
+            # end
 
             G₀ = align_pair(Gₗ, Gᵣ, energy, minblock, aligner, verify, true)
             log("--> aligned graph pairs, blocks = $(length(G₀.block))")
-            finalize!(G₀)
-            open("$dir/graphs_$(Gν)_pair.json", "w") do io
-                marshal_json(io, G₀)
-            end
+            # finalize!(G₀)
+            # open("$dir/graphs_$(Gν)_pair.json", "w") do io
+            #     marshal_json(io, G₀)
+            # end
             G₀ = align_self(G₀, energy, minblock, aligner, verify, true, dirtag="$dir/graphs_$(Gν)_self")
             log("--> self-aligned graphs, blocks = $(length(G₀.block)), paths = $(length(G₀.sequence))")
-            finalize!(G₀)
-            open("$dir/graphs_$(Gν)_self.json", "w") do io
-                marshal_json(io, G₀)
-            end
+            # finalize!(G₀)
+            # open("$dir/graphs_$(Gν)_self.json", "w") do io
+            #     marshal_json(io, G₀)
+            # end
 
             Gν += 1
 

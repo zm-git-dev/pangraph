@@ -455,7 +455,23 @@ function enforce_cutoff!(a::Alignment, χ)
         append!(a.cigar, cg)
         a.length += length(a₁)
     end
+    # clean_cigar_edges!(a.cigar)
 end
+
+# function clean_cigar_edges!(cg)
+#     L = length(cg)
+#     L < 3 && return
+#     for i in 1:L-2
+#         if all(x -> x[2] ∈ ['I', 'D'], [cg[j] for j in i:i+2])
+#             println(stderr, "correction!", cg[i:i+2])
+#             @assert cg[i][2] == cg[i+2][2]
+#             cg[i] = (cg[i][1] + cg[i+2][1], cg[i][2])
+#             popat!(cg, i+2)
+#             clean_cigar_edges!(cg)
+#             break
+#         end
+#     end
+# end
 
 # ------------------------------------------------------------------------
 # insertion -> intervals

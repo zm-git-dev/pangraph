@@ -45,6 +45,56 @@ function recigar!(hit::Alignment)
 
     hit.cigar = String(take!(buffer))
     hit.cigar = collect(uncigar(hit.cigar))
+    hit = trim_ending!(hit)
+    return hit
+end
+
+"""
+    trim_ending!(hit::Alignment)
+
+Remove leading and trailing deletions and insertions from the cigar,
+so that the first and last entry is a match.
+"""
+function trim_ending!(hit::Alignment)
+    
+    # trim leading deletions/insertions
+    while hit.cigar[1][2] != 'M'
+        len, type = popfirst!(hit.cigar)
+        hit.length -= len
+        if type == 'I'
+            hit.qry.start += len
+            if hit.qry.seq !== nothing
+                hit.qry.seq = hit.qry.seq[len+1:end]
+            end
+        elseif type == 'D'
+            hit.ref.start += len
+            if hit.ref.seq !== nothing
+                hit.ref.seq = hit.ref.seq[len+1:end]
+            end
+        else
+            raise("unrecognized cigar type")
+        end
+    end
+
+    # trim trailing deletions/insertions
+    while hit.cigar[end][2] != 'M'
+        len, type = pop!(hit.cigar)
+        hit.length -= len
+        if type == 'I'
+            hit.qry.stop -= len
+            if hit.qry.seq !== nothing
+                hit.qry.seq = hit.qry.seq[1:end-len]
+            end
+        elseif type == 'D'
+            hit.ref.stop -= len
+            if hit.ref.seq !== nothing
+                hit.ref.seq = hit.ref.seq[1:end-len]
+            end
+        else
+            raise("unrecognized cigar type")
+        end
+    end
+
     return hit
 end
 
@@ -55,7 +105,7 @@ Align homologous regions of `qry` and `ref`.
 Returns the list of intervals between pancontigs.
 """
 function align(ref::PanContigs, qry::PanContigs)
-    dir = "wfmash_1/" * randstring(10)
+    dir = "wfmash_3/" * randstring(10)
     mkpath(dir)
     println(stderr, "wfmash dir: $dir")
     flush(stderr)
@@ -100,7 +150,8 @@ function align(ref::PanContigs, qry::PanContigs)
             )
     end
     hits = open(read_paf, "$dir/aln.paf")
-    return map(recigar!, hits)
+    hits = map(recigar!, hits)
+    return hits
 end
 
 end

@@ -5,6 +5,7 @@ import Base:
 
 using ..Nodes
 using ..Blocks
+using Infiltrator
 
 import ..Graphs:
     pair, sequence, reverse_complement,
@@ -88,16 +89,26 @@ function Base.replace!(p::Path, old::Block, new::Array{Block}, orientation::Bool
     inserts = Array{Node{Block}}[]
 
     for (i, n₁) in enumerate(p.node)
+        # for every node that contains the block in question
         n₁.block != old && continue
-
-        push!(indices, i)
-
+        
+        # create a list of new nodes with the block in question
         nodes = ((n₁.strand==orientation)
-                     ? [Node(nb;strand=true) for nb in new] 
-                     : [Node(nb;strand=false) for nb in reverse(new)])
-        for n₂ in nodes
+        ? [Node(nb;strand=true) for nb in new] 
+        : [Node(nb;strand=false) for nb in reverse(new)])
+        
+        push!(indices, i)
+        
+        is_culprit = old.uuid == "PXMEPEVRUB"
+        
+        # @infiltrate is_culprit
+
+        for (j, n₂) in enumerate(nodes)
+            is_culprit && println(j, " block: ", n₂.block, "\nmutate: ", collect(keys(n₂.block.mutate)), "\noldkey: ", n₁, "\nnewkey: ", n₂)
             swap!(n₂.block, n₁, n₂)
         end
+
+        # is_culprit && println("not failed")
 
         push!(inserts, nodes)
     end

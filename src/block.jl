@@ -1,6 +1,7 @@
 module Blocks
 
 using Rematch
+using Infiltrator
 
 import Base:
     show, length, append!, keys, merge!, pop!
@@ -1258,9 +1259,9 @@ Parameter `minblock` is the cutoff length of an indel, above which a new block w
 """
 function combine(qry::Block, ref::Block, aln::Alignment; minblock=500)
     blocks = NamedTuple{(:block,:kind),Tuple{Block,Symbol}}[]
-
+    is_cuplrit = qry.uuid == "HGGRWCOMSB"
     segments = partition(aln; minblock=minblock) # this enforces that indels are less than minblock!
-
+    # @infiltrate is_cuplrit
     for (range, segment) ∈ segments
         @match (range.qry, range.ref) begin
             ( nothing, Δ )  => begin
@@ -1281,6 +1282,9 @@ function combine(qry::Block, ref::Block, aln::Alignment; minblock=500)
                 new = rereference(q, r, segment)
                 reconsensus!(new)
                 regap!(new)
+
+                # @infiltrate is_cuplrit
+
 
                 push!(blocks, (block=new, kind=:all))
             end
