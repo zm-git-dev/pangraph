@@ -1259,7 +1259,7 @@ Parameter `minblock` is the cutoff length of an indel, above which a new block w
 """
 function combine(qry::Block, ref::Block, aln::Alignment; minblock=500)
     blocks = NamedTuple{(:block,:kind),Tuple{Block,Symbol}}[]
-    is_cuplrit = qry.uuid == "HGGRWCOMSB"
+    # is_cuplrit = qry.uuid == "HGGRWCOMSB"
     segments = partition(aln; minblock=minblock) # this enforces that indels are less than minblock!
     # @infiltrate is_cuplrit
     for (range, segment) ∈ segments
@@ -1290,6 +1290,10 @@ function combine(qry::Block, ref::Block, aln::Alignment; minblock=500)
             end
         end
     end
+
+    # for (b, k) in blocks
+    #     check(b, ids=false)
+    # end
 
     return blocks
 end

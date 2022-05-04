@@ -99,12 +99,12 @@ function Base.replace!(p::Path, old::Block, new::Array{Block}, orientation::Bool
         
         push!(indices, i)
         
-        is_culprit = old.uuid == "PXMEPEVRUB"
+        # is_culprit = old.uuid == "PXMEPEVRUB"
         
         # @infiltrate is_culprit
 
         for (j, n₂) in enumerate(nodes)
-            is_culprit && println(j, " block: ", n₂.block, "\nmutate: ", collect(keys(n₂.block.mutate)), "\noldkey: ", n₁, "\nnewkey: ", n₂)
+            # is_culprit && println(j, " block: ", n₂.block, "\nmutate: ", collect(keys(n₂.block.mutate)), "\noldkey: ", n₁, "\nnewkey: ", n₂)
             swap!(n₂.block, n₁, n₂)
         end
 

@@ -4,8 +4,6 @@ import ..PanGraph: PanContigs, Alignment
 import ..PanGraph.Graphs.Utility: read_paf, write_fasta, uncigar
 import ..PanGraph.Graphs.Shell: execute
 
-using Random
-
 export align
 
 """
@@ -45,58 +43,97 @@ function recigar!(hit::Alignment)
 
     hit.cigar = String(take!(buffer))
     hit.cigar = collect(uncigar(hit.cigar))
-    hit = trim_ending!(hit)
+    hit = trim_flanking_mismatches!(hit)
     return hit
 end
 
 """
-    trim_ending!(hit::Alignment)
+    trim_flanking_mismatches!(hit::Alignment)
 
 Remove leading and trailing deletions and insertions from the cigar,
 so that the first and last entry is a match.
 """
-function trim_ending!(hit::Alignment)
+function trim_flanking_mismatches!(hit::Alignment)
     
+    function check_hit(hit::Alignment)
+        qb, qe, ql = hit.qry.start, hit.qry.stop, hit.qry.length
+        rb, re, rl = hit.ref.start, hit.ref.stop, hit.ref.length
+        if  ((qb  < 1) || (qe > ql) || (rb < 1) || (re > rl) ||
+            (qb > ql) || (qe < 1) || (rb > rl) || (re < 1))
+            println(stderr, "qry: start $qb, stop $qe, length $ql")
+            println(stderr, "ref: start $rb, stop $re, length $rl")
+            flush(stderr)
+            error("weird hit")
+        end
+
+        qL = sum([l for (l, t) in hit.cigar if t ∈ ['M', 'I']])
+        rL = sum([l for (l, t) in hit.cigar if t ∈ ['M', 'D']])
+        if (qe - qb + 1 != qL) || (re - rb + 1 != rL)
+            println(stderr, "qry: start $qb, stop $qe, length $qL")
+            println(stderr, "ref: start $rb, stop $re, length $rL")
+            flush(stderr)
+            error("length not matching interval")
+        end
+
+        if ((hit.matches < 100) && (hit.length > 200)) || (hit.matches * 10 < hit.length)
+            println(stderr, "cigar: ", hit.cigar)
+            println(stderr, "match: $(hit.matches), length: $(hit.length)")
+            flush(stderr)
+        end
+    
+        (hit.length <= 0) && error("zero-length hit")
+
+    end
+
     # trim leading deletions/insertions
     while hit.cigar[1][2] != 'M'
+        # println(stderr, "cleaning cigar start ", hit.cigar)
         len, type = popfirst!(hit.cigar)
-        hit.length -= len
+        # println(stderr, "into", hit.cigar)
+
         if type == 'I'
-            hit.qry.start += len
-            if hit.qry.seq !== nothing
-                hit.qry.seq = hit.qry.seq[len+1:end]
+            if hit.orientation
+                hit.qry.start += len
+            else
+                hit.qry.stop -= len
             end
         elseif type == 'D'
             hit.ref.start += len
-            if hit.ref.seq !== nothing
-                hit.ref.seq = hit.ref.seq[len+1:end]
-            end
         else
-            raise("unrecognized cigar type")
+            error("unrecognized cigar type")
         end
     end
-
+    
     # trim trailing deletions/insertions
     while hit.cigar[end][2] != 'M'
+        # println(stderr, "cleaning cigar end", hit.cigar)
         len, type = pop!(hit.cigar)
-        hit.length -= len
+        # println(stderr, "len $len and type $type into -> ", hit.cigar)
         if type == 'I'
-            hit.qry.stop -= len
-            if hit.qry.seq !== nothing
-                hit.qry.seq = hit.qry.seq[1:end-len]
+            if hit.orientation
+                hit.qry.stop -= len
+            else
+                hit.qry.start += len
             end
         elseif type == 'D'
             hit.ref.stop -= len
-            if hit.ref.seq !== nothing
-                hit.ref.seq = hit.ref.seq[1:end-len]
-            end
         else
-            raise("unrecognized cigar type")
+            error("unrecognized cigar type")
         end
     end
 
+    if (hit.qry.seq !== nothing) || (hit.ref.seq !== nothing)
+        error("sequence trimming not yet implemented")
+    end
+
+    # re-evaluate length of the hit. It is necessary because wfmash does not report the standard length
+    hit.length = sum([l for (l, t) in hit.cigar])
+
+    # check_hit(hit)
+
     return hit
 end
+
 
 """
     align(ref::PanContigs, qry::PanContigs)
@@ -105,53 +142,110 @@ Align homologous regions of `qry` and `ref`.
 Returns the list of intervals between pancontigs.
 """
 function align(ref::PanContigs, qry::PanContigs)
-    dir = "wfmash_3/" * randstring(10)
-    mkpath(dir)
-    println(stderr, "wfmash dir: $dir")
-    flush(stderr)
     if ref != qry
-        open("$dir/qry.fa","w") do io
-            for (name, seq) in zip(qry.name, qry.sequence)
-                if length(seq) ≥ 95
-                    write_fasta(io, name, seq)
+        hits = mktempdir() do dir
+            open("$dir/qry.fa","w") do io
+                for (name, seq) in zip(qry.name, qry.sequence)
+                    if length(seq) ≥ 95
+                        write_fasta(io, name, seq)
+                    end
                 end
             end
-        end
 
-        open("$dir/ref.fa","w") do io
-            for (name, seq) in zip(ref.name, ref.sequence)
-                if length(seq) ≥ 95
-                    write_fasta(io, name, seq)
+            open("$dir/ref.fa","w") do io
+                for (name, seq) in zip(ref.name, ref.sequence)
+                    if length(seq) ≥ 95
+                        write_fasta(io, name, seq)
+                    end
                 end
             end
-        end
 
-        run(`samtools faidx $dir/ref.fa`)
-        run(`samtools faidx $dir/qry.fa`)
-        run(pipeline(`wfmash $dir/ref.fa $dir/qry.fa`,
-            stdout="$dir/aln.paf",
-            stderr="$dir/err.log"
+            run(`samtools faidx $dir/ref.fa`)
+            run(`samtools faidx $dir/qry.fa`)
+            run(pipeline(`wfmash $dir/ref.fa $dir/qry.fa`,
+                stdout="$dir/aln.paf",
+                stderr="$dir/err.log"
+               )
             )
-        )
+
+            open(read_paf, "$dir/aln.paf")
+        end
+
+        return map(recigar!, hits)
     else
-        open("$dir/seq.fa","w") do io
-            for (name, seq) in zip(qry.name, qry.sequence)
-                if length(seq) ≥ 95
-                    write_fasta(io, name, seq)
+        hits = mktempdir() do dir
+            open("$dir/seq.fa","w") do io
+                for (name, seq) in zip(qry.name, qry.sequence)
+                    if length(seq) ≥ 95
+                        write_fasta(io, name, seq)
+                    end
                 end
             end
+
+            run(`samtools faidx $dir/seq.fa`)
+            run(pipeline(`wfmash -X $dir/seq.fa $dir/seq.fa`,
+                stdout="$dir/aln.paf",
+                stderr="$dir/err.log"
+               )
+            )
+
+            open(read_paf, "$dir/aln.paf")
         end
 
-        run(`samtools faidx $dir/seq.fa`)
-        run(pipeline(`wfmash -X $dir/seq.fa $dir/seq.fa`,
-            stdout="$dir/aln.paf",
-            stderr="$dir/err.log"
-            )
-            )
+        return map(recigar!, hits)
     end
-    hits = open(read_paf, "$dir/aln.paf")
-    hits = map(recigar!, hits)
-    return hits
 end
+
+# using Random
+# 
+# function align(ref::PanContigs, qry::PanContigs)
+#     dir = "wfmash_1/" * randstring(10)
+#     mkpath(dir)
+#     println(stderr, "wfmash dir: $dir")
+#     flush(stderr)
+#     if ref != qry
+#         open("$dir/qry.fa","w") do io
+#             for (name, seq) in zip(qry.name, qry.sequence)
+#                 if length(seq) ≥ 95
+#                     write_fasta(io, name, seq)
+#                 end
+#             end
+#         end
+
+#         open("$dir/ref.fa","w") do io
+#             for (name, seq) in zip(ref.name, ref.sequence)
+#                 if length(seq) ≥ 95
+#                     write_fasta(io, name, seq)
+#                 end
+#             end
+#         end
+
+#         run(`samtools faidx $dir/ref.fa`)
+#         run(`samtools faidx $dir/qry.fa`)
+#         run(pipeline(`wfmash $dir/ref.fa $dir/qry.fa`,
+#             stdout="$dir/aln.paf",
+#             stderr="$dir/err.log"
+#             )
+#         )
+#     else
+#         open("$dir/seq.fa","w") do io
+#             for (name, seq) in zip(qry.name, qry.sequence)
+#                 if length(seq) ≥ 95
+#                     write_fasta(io, name, seq)
+#                 end
+#             end
+#         end
+
+#         run(`samtools faidx $dir/seq.fa`)
+#         run(pipeline(`wfmash -X $dir/seq.fa $dir/seq.fa`,
+#             stdout="$dir/aln.paf",
+#             stderr="$dir/err.log"
+#             )
+#             )
+#     end
+#     hits = open(read_paf, "$dir/aln.paf")
+#     hits = map(recigar!, hits)
+#     return hits
+# end
 
 end

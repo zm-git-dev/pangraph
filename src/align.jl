@@ -345,6 +345,11 @@ function preprocess(hits, skip, energy, blocks!)
         end for hit in hits if (energy(hit) < 0 && !skip(hit))
     ]
 
+    # DEBUG: extra log
+    for hit in hits
+        log("--------\nmerge hit:\t", hit.hit, "\nmatches: $(hit.hit.matches), length: $(hit.hit.length), ratio: $(hit.hit.matches / hit.hit.length) \ncigar: ", hit.hit.cigar)
+    end
+
     return hits
 end
 
@@ -368,15 +373,15 @@ function align_kernel(matches, minblock, replace!, verbose)
         # destructure precomputed hit
         hit,qry,ref,qry₀,ref₀,strand = match
 
-        verbose && log(hit)
+        # verbose && log(hit)
 
-        is_culprit = (qry.uuid=="HGGRWCOMSB") | (ref.uuid=="HGGRWCOMSB")
+        # is_culprit = (qry.uuid=="HGGRWCOMSB") | (ref.uuid=="HGGRWCOMSB")
         # is_culprit = true
-        is_culprit && log("cigar bef: ", hit.cigar)
+        # is_culprit && log("cigar bef: ", hit.cigar)
 
         enforce_cutoff!(hit, minblock)
 
-        is_culprit && log("cigar aft: ", hit.cigar)
+        # is_culprit && log("cigar aft: ", hit.cigar)
         # @infiltrate is_culprit
 
         blks = combine(qry, ref, hit; minblock=minblock)
@@ -416,11 +421,14 @@ function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Funct
         # calculate pairwise hits
         hits = do_align(G₀, G₀, energy, aligner)
 
+        log("--> self-merge n. $niter")
+
         # closures
         skip = (hit) -> (
                (hit.qry.name == hit.ref.name)
             || (hit.length < minblock)
             || (!(hit.qry.name in keys(G₀.block)) || !(hit.ref.name in keys(G₀.block)))
+            # || (hit.matches / hit.length < 0.9)
         )
         block = (hit) -> (
             qry = pop!(G₀.block, hit.qry.name),
@@ -460,6 +468,8 @@ function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Funct
         end
 
     end
+
+    log("--> self-merge complete --- ~~~ ---")
 
     return G₀
 end
@@ -559,6 +569,7 @@ function align_pair(G₁::Graph, G₂::Graph, energy::Function, minblock::Int, a
             !(hit.ref.name in keys(G₁.block))
          || !(hit.qry.name in keys(G₂.block))
          || (hit.length < minblock)
+        #  || (hit.matches / hit.length < 0.9)
     )
     block = (hit) -> (
         qry = pop!(G₂.block, hit.qry.name),
@@ -668,7 +679,7 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
 
 
     Gν = 0
-    dir = mkpath("graphs_3")
+    # dir = mkpath("graphs_1")
 
     G = nothing
     for clade ∈ postorder(tree)
@@ -694,13 +705,14 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
             # end
 
             G₀ = align_pair(Gₗ, Gᵣ, energy, minblock, aligner, verify, true)
-            log("--> aligned graph pairs, blocks = $(length(G₀.block))")
+            # log("--> aligned graph pairs, blocks = $(length(G₀.block))")
             # finalize!(G₀)
             # open("$dir/graphs_$(Gν)_pair.json", "w") do io
             #     marshal_json(io, G₀)
             # end
-            G₀ = align_self(G₀, energy, minblock, aligner, verify, true, dirtag="$dir/graphs_$(Gν)_self")
-            log("--> self-aligned graphs, blocks = $(length(G₀.block)), paths = $(length(G₀.sequence))")
+            G₀ = align_self(G₀, energy, minblock, aligner, verify, true)
+            # G₀ = align_self(G₀, energy, minblock, aligner, verify, true, dirtag="$dir/graphs_$(Gν)_self")
+            # log("--> self-aligned graphs, blocks = $(length(G₀.block)), paths = $(length(G₀.sequence))")
             # finalize!(G₀)
             # open("$dir/graphs_$(Gν)_self.json", "w") do io
             #     marshal_json(io, G₀)
