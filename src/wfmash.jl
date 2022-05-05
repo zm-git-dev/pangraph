@@ -55,68 +55,83 @@ so that the first and last entry is a match.
 """
 function trim_flanking_mismatches!(hit::Alignment)
     
-    function check_hit(hit::Alignment)
-        qb, qe, ql = hit.qry.start, hit.qry.stop, hit.qry.length
-        rb, re, rl = hit.ref.start, hit.ref.stop, hit.ref.length
-        if  ((qb  < 1) || (qe > ql) || (rb < 1) || (re > rl) ||
-            (qb > ql) || (qe < 1) || (rb > rl) || (re < 1))
-            println(stderr, "qry: start $qb, stop $qe, length $ql")
-            println(stderr, "ref: start $rb, stop $re, length $rl")
-            flush(stderr)
-            error("weird hit")
-        end
+    # function check_hit(hit::Alignment)
+    #     qb, qe, ql = hit.qry.start, hit.qry.stop, hit.qry.length
+    #     rb, re, rl = hit.ref.start, hit.ref.stop, hit.ref.length
+    #     if  ((qb  < 1) || (qe > ql) || (rb < 1) || (re > rl) ||
+    #         (qb > ql) || (qe < 1) || (rb > rl) || (re < 1))
+    #         println(stderr, "qry: start $qb, stop $qe, length $ql")
+    #         println(stderr, "ref: start $rb, stop $re, length $rl")
+    #         flush(stderr)
+    #         error("weird hit")
+    #     end
 
-        qL = sum([l for (l, t) in hit.cigar if t ∈ ['M', 'I']])
-        rL = sum([l for (l, t) in hit.cigar if t ∈ ['M', 'D']])
-        if (qe - qb + 1 != qL) || (re - rb + 1 != rL)
-            println(stderr, "qry: start $qb, stop $qe, length $qL")
-            println(stderr, "ref: start $rb, stop $re, length $rL")
-            flush(stderr)
-            error("length not matching interval")
-        end
+    #     qL = sum([l for (l, t) in hit.cigar if t ∈ ['M', 'I']])
+    #     rL = sum([l for (l, t) in hit.cigar if t ∈ ['M', 'D']])
+    #     if (qe - qb + 1 != qL) || (re - rb + 1 != rL)
+    #         println(stderr, "qry: start $qb, stop $qe, length $qL")
+    #         println(stderr, "ref: start $rb, stop $re, length $rL")
+    #         flush(stderr)
+    #         error("length not matching interval")
+    #     end
 
-        if ((hit.matches < 100) && (hit.length > 200)) || (hit.matches * 10 < hit.length)
-            println(stderr, "cigar: ", hit.cigar)
-            println(stderr, "match: $(hit.matches), length: $(hit.length)")
-            flush(stderr)
-        end
+    #     if ((hit.matches < 100) && (hit.length > 200)) || (hit.matches * 10 < hit.length)
+    #         println(stderr, "cigar: ", hit.cigar)
+    #         println(stderr, "match: $(hit.matches), length: $(hit.length)")
+    #         flush(stderr)
+    #     end
     
-        (hit.length <= 0) && error("zero-length hit")
+    #     (hit.length <= 0) && error("zero-length hit")
 
+    # end
+
+    function qry_trim!(hit, len, side)
+        # side == true => trim from left side
+        if side ⊻ (! hit.orientation)
+            hit.qry.start += len
+        else
+            hit.qry.stop -= len
+        end
     end
 
     # trim leading deletions/insertions
-    while hit.cigar[1][2] != 'M'
+    trim_threshold_length = 15
+    while (hit.cigar[1][2] != 'M') || (hit.cigar[1][1] <= trim_threshold_length)
         # println(stderr, "cleaning cigar start ", hit.cigar)
         len, type = popfirst!(hit.cigar)
         # println(stderr, "into", hit.cigar)
-
         if type == 'I'
-            if hit.orientation
-                hit.qry.start += len
-            else
-                hit.qry.stop -= len
-            end
+            qry_trim!(hit, len, true)
         elseif type == 'D'
             hit.ref.start += len
+        elseif type == 'M'
+            qry_trim!(hit, len, true)
+            hit.ref.start += len
+            hit.matches -= len
         else
             error("unrecognized cigar type")
+        end
+
+        # catch the edge-case in which all the cigar string has been cleaned
+        if length(hit.cigar) == 0
+            hit.length = 0
+            return hit
         end
     end
     
     # trim trailing deletions/insertions
-    while hit.cigar[end][2] != 'M'
+    while (hit.cigar[end][2] != 'M') || (hit.cigar[end][1] <= trim_threshold_length)
         # println(stderr, "cleaning cigar end", hit.cigar)
         len, type = pop!(hit.cigar)
         # println(stderr, "len $len and type $type into -> ", hit.cigar)
         if type == 'I'
-            if hit.orientation
-                hit.qry.stop -= len
-            else
-                hit.qry.start += len
-            end
+            qry_trim!(hit, len, false)
         elseif type == 'D'
             hit.ref.stop -= len
+        elseif type == 'M'
+            qry_trim!(hit, len, false)
+            hit.ref.stop -= len
+            hit.matches -= len
         else
             error("unrecognized cigar type")
         end
@@ -128,6 +143,7 @@ function trim_flanking_mismatches!(hit::Alignment)
 
     # re-evaluate length of the hit. It is necessary because wfmash does not report the standard length
     hit.length = sum([l for (l, t) in hit.cigar])
+    # hit.matches = sum([l for (l, t) in hit.cigar if t == 'M'])
 
     # check_hit(hit)
 
@@ -142,6 +158,7 @@ Align homologous regions of `qry` and `ref`.
 Returns the list of intervals between pancontigs.
 """
 function align(ref::PanContigs, qry::PanContigs)
+    hits = nothing
     if ref != qry
         hits = mktempdir() do dir
             open("$dir/qry.fa","w") do io
@@ -162,7 +179,7 @@ function align(ref::PanContigs, qry::PanContigs)
 
             run(`samtools faidx $dir/ref.fa`)
             run(`samtools faidx $dir/qry.fa`)
-            run(pipeline(`wfmash $dir/ref.fa $dir/qry.fa`,
+            run(pipeline(`wfmash -g3,15,1 $dir/ref.fa $dir/qry.fa`,
                 stdout="$dir/aln.paf",
                 stderr="$dir/err.log"
                )
@@ -170,8 +187,6 @@ function align(ref::PanContigs, qry::PanContigs)
 
             open(read_paf, "$dir/aln.paf")
         end
-
-        return map(recigar!, hits)
     else
         hits = mktempdir() do dir
             open("$dir/seq.fa","w") do io
@@ -183,7 +198,7 @@ function align(ref::PanContigs, qry::PanContigs)
             end
 
             run(`samtools faidx $dir/seq.fa`)
-            run(pipeline(`wfmash -X $dir/seq.fa $dir/seq.fa`,
+            run(pipeline(`wfmash -X -g3,15,1 $dir/seq.fa $dir/seq.fa`,
                 stdout="$dir/aln.paf",
                 stderr="$dir/err.log"
                )
@@ -191,9 +206,12 @@ function align(ref::PanContigs, qry::PanContigs)
 
             open(read_paf, "$dir/aln.paf")
         end
-
-        return map(recigar!, hits)
     end
+
+    hits = map(recigar!, hits)
+    # remove hits of length zero that might have been produced after trimming the cigar string
+    hits = filter(h -> h.length > 0, hits)
+    return hits
 end
 
 # using Random
