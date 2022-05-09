@@ -347,7 +347,7 @@ function preprocess(hits, skip, energy, blocks!)
 
     # DEBUG: extra log
     for hit in hits
-        log("--------\nmerge hit:\t", hit.hit, "\nmatches: $(hit.hit.matches), length: $(hit.hit.length), ratio: $(hit.hit.matches / hit.hit.length) \ncigar: ", hit.hit.cigar)
+        log("--------\nmerge hit:\t", hit.hit, "\nmatches: $(hit.hit.matches), length: $(hit.hit.length), ratio: $(hit.hit.matches / hit.hit.length), divergence: $(hit.hit.divergence) \ncigar: ", hit.hit.cigar)
     end
 
     return hits
