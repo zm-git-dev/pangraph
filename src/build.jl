@@ -130,14 +130,14 @@ Build = Command(
            end
        end
 
-       aligner(contigs₁, contigs₂) = @match arg(Build, "-k") begin
+       aligner(contigs₁, contigs₂; vbp=nothing) = @match arg(Build, "-k") begin
            "minimap2" => Minimap.align(contigs₁, contigs₂, minblock, sensitivity)
            "mmseqs"   => let
                if !Shell.havecommand("mmseqs")
                    panic("external command mmseqs not found. please install before running build step with mmseqs backend\n")
                end
 
-               MMseqs.align(contigs₁, contigs₂)
+               MMseqs.align(contigs₁, contigs₂; vbp=vbp)
            end
                     _ => error("unrecognized alignment kernel")
        end

@@ -64,15 +64,16 @@ rule guess_pangraph_mmseqs:
     input:
         rules.generate_data.output.seqs
     output:
-        "synthetic_data/mmseqs/{hgt}_{snps}/guess_{n}.json"
+        "synthetic_data/mmseqs/{hgt}_{snps}/guess_{n}.json",
     params:
-        ker = ker_opt["mmseqs"]
+        ker = ker_opt["mmseqs"],
+        log = "synthetic_data/mmseqs/{hgt}_{snps}/guess_{n}.txt",
     conda:
         "cluster/pangraph_build_env.yml"
     shell:
         """
         julia -t 8 --project={pgf} {pgf}/src/PanGraph.jl build \
-            --circular -a 0 -b 0 {params.ker} {input} > {output}
+            --circular -a 0 -b 0 {params.ker} {input} 1> {output} 2> {params.log}
         """
 
 rule single_accuracy:

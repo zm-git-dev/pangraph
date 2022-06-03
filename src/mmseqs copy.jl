@@ -37,14 +37,14 @@ function align(ref::PanContigs, qry::PanContigs; vbp=nothing)
         
         vb && log(vbp, "aligning in temp dir: $dir")
 
-        qryfa, reffa = "$dir/qry.fa", "$dir/ref.fa"
+        qrydb, refdb = "$dir/qry", "$dir/ref"
         if ref == qry
-            reffa = qryfa
+            refdb = qrydb
         end
 
-        vb && log(vbp, "write qry: $qryfa")
+        vb && log(vbp, "write qry: $qrydb.fa")
 
-        open("$qryfa", "w") do io
+        open("$qrydb.fa", "w") do io
             for (name, seq) in zip(qry.name, qry.sequence)
                 if length(seq) ≥ 95
                     write_fasta(io, name, seq)
@@ -52,28 +52,48 @@ function align(ref::PanContigs, qry::PanContigs; vbp=nothing)
             end
         end
 
+        vb && log(vbp, "create qrydb: $qrydb")
+        myrun(`mmseqs createdb $qrydb.fa $qrydb`, vbp)
+
         if ref != qry
 
-            vb && log(vbp, "create ref: $reffa")
+            vb && log(vbp, "create ref: $refdb.fa")
 
-            open("$reffa", "w") do io
+            open("$refdb.fa", "w") do io
                 for (name, seq) in zip(ref.name, ref.sequence)
                     if length(seq) ≥ 95
                         write_fasta(io, name, seq)
                     end
                 end
             end
+
+            vb && log(vbp, "create refdb: $refdb")
+
+            myrun(`mmseqs createdb $refdb.fa $refdb`, vbp)
+
         end
 
-        vb && log(vbp, "run easy-search")
+        vb && log(vbp, "run search")
 
         # log("mmseqs search")
-        myrun(`mmseqs easy-search
-                $qryfa $reffa $dir/res.paf $dir/tmp
+        myrun(`mmseqs search 
                 --threads 1 
                 -a 
                 --max-seq-len 10000
                 --search-type 3
+                $qrydb $refdb $dir/res $dir/tmp`,
+            vbp
+        )
+
+        vb && log(vbp, "run convertalis")
+
+        # error("emerge")
+        # log("mmseqs convertalis")
+        p = myrun(
+                `mmseqs convertalis
+                --threads 1 
+                --search-type 3
+                $qrydb $refdb $dir/res $dir/res.paf
                 --format-output query,qlen,qstart,qend,empty,target,tlen,tstart,tend,nident,alnlen,bits,cigar,fident,raw`,
             vbp
         )

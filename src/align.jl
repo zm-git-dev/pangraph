@@ -23,6 +23,12 @@ function log(msg...)
     flush(stderr)
 end
 
+function lock_log(lk::ReentrantLock, msg...)
+    lock(lk) do
+        log(msg...)
+    end
+end
+
 # ------------------------------------------------------------------------
 # guide tree for order of pairwise comparison for multiple alignments
 
@@ -351,12 +357,12 @@ function preprocess(hits, skip, energy, blocks!)
     return hits
 end
 
-function do_align(G₁::Graph, G₂::Graph, energy::Function, aligner::Function)
+function do_align(G₁::Graph, G₂::Graph, energy::Function, aligner::Function; vbp=nothing)
     hits = if G₁ == G₂
         self = pancontigs(G₁)
-        aligner(self, self)
+        aligner(self, self; vbp=vbp)
     else
-        aligner(pancontigs(G₁), pancontigs(G₂))
+        aligner(pancontigs(G₁), pancontigs(G₂); vbp=vbp)
     end
     sort!(hits; by=energy)
 
@@ -398,12 +404,18 @@ The _lower_ the score, the _better_ the alignment. Only negative energies are co
 `minblock` is the minimum size block that will be produced from the algorithm.
 `maxiter` is maximum number of duplications that will be considered during this alignment.
 """
-function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Function, verify::Function, verbose::Bool; maxiter=100, sensitivity="asm10")
+function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Function, verify::Function, verbose::Bool; maxiter=100, vbp=nothing)
     G₀ = G₁
+    vb = vbp !== nothing
 
     for niter in 1:maxiter
         # calculate pairwise hits
-        hits = do_align(G₀, G₀, energy, aligner)
+
+        vb && lock_log(vbp[2], "task: $(vbp[1]) -> aligning self $niter") 
+    
+        hits = do_align(G₀, G₀, energy, aligner; vbp=vbp)
+
+        vb && lock_log(vbp[2], "task: $(vbp[1]) -> aligning self $niter: N.hits = $(length(hits))") 
 
         # closures
         skip = (hit) -> (
@@ -428,6 +440,7 @@ function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Funct
         # filter out according to energy & skip conditions
         # only continue if at least one hit survived
         merges = preprocess(hits, skip, energy, block)
+        vb && lock_log(vbp[2], "task: $(vbp[1]) -> aligning self $niter: N. merges = $(length(merges))") 
         length(merges) > 0 || break
 
         blocks = align_kernel(merges, minblock, replace, verbose)
@@ -437,10 +450,14 @@ function align_self(G₁::Graph, energy::Function, minblock::Int, aligner::Funct
             blocks,
             G₀.sequence,
         )
+
+        
         detransitive!(G₀)
         purge!(G₀)
         prune!(G₀)
     end
+    
+    vb && lock_log(vbp[2], "task: $(vbp[1]) -> finished self align.") 
 
     return G₀
 end
@@ -532,8 +549,15 @@ The _lower_ the score, the _better_ the alignment. Only negative energies are co
 `minblock` is the minimum size block that will be produced from the algorithm.
 `maxiter` is maximum number of duplications that will be considered during this alignment.
 """
-function align_pair(G₁::Graph, G₂::Graph, energy::Function, minblock::Int, aligner::Function, verify::Function, verbose::Bool)
-    hits = do_align(G₁, G₂, energy, aligner)
+function align_pair(G₁::Graph, G₂::Graph, energy::Function, minblock::Int, aligner::Function, verify::Function, verbose::Bool; vbp=nothing)
+    vb = vbp !== nothing
+
+    vb && lock_log(vbp[2], "task: $(vbp[1]) -> aligning pair") 
+
+    hits = do_align(G₁, G₂, energy, aligner; vbp=vbp)
+
+    vb && lock_log(vbp[2], "task: $(vbp[1]) -> aligning pair: N.hits = $(length(hits))") 
+
 
     # closures
     skip = (hit) -> (
@@ -557,6 +581,8 @@ function align_pair(G₁::Graph, G₂::Graph, energy::Function, minblock::Int, a
 
     merges = preprocess(hits, skip, energy, block)
 
+    vb && lock_log(vbp[2], "task: $(vbp[1]) -> aligning pari: N. merges = $(length(merges))") 
+
     blocks   = align_kernel(merges, minblock, replace, verbose)
     sequence = merge(G₁.sequence, G₂.sequence)
 
@@ -572,6 +598,8 @@ function align_pair(G₁::Graph, G₂::Graph, energy::Function, minblock::Int, a
     detransitive!(G)
     purge!(G)
     prune!(G)
+
+    vb && lock_log(vbp[2], "task: $(vbp[1]) -> finished pair align.") 
 
     return G
 end
@@ -653,11 +681,13 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
     # semaphore to ensure that only N=Threads.nthreads() are
     # executing subcommands run(`cmd`) at the same time
     s = Base.Semaphore(Threads.nthreads())
-    meter_lock = ReentrantLock()
+    # meter_lock = ReentrantLock()
+    plk = ReentrantLock()
 
     G = nothing
     for clade ∈ postorder(tree)
         @spawn try
+            tid = objectid(current_task())
             if isleaf(clade)
                 close(clade.graph)
                 put!(clade.parent.graph, tips[clade.name])
@@ -665,24 +695,46 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
                 Gₗ = take!(clade.graph)
                 Gᵣ = take!(clade.graph)
                 close(clade.graph)
+                
+                gls, glb = Gₗ.sequence, Gₗ.block 
+                grs, grb = Gᵣ.sequence, Gᵣ.block
+                msg = """
+                ---
+                spawned merging task: $tid
+                merging left: (n. blocks $(length(glb)))  $(length(gls)) - $(collect(keys(gls)))
+                merging right: (n. blocks $(length(grb))) $(length(grs)) - $(collect(keys(grs)))
+                ---
+                """
+                lock_log(plk, msg)
+
+
 
                 # the lock ensures that at most N=Threads.nthreads() processes are
                 # spawning run(`cmd`) instances at the same time
                 G₀ = lock_semaphore(s) do
-                    G₀ = align_pair(Gₗ, Gᵣ, energy, minblock, aligner, verify, false)
-                    align_self(G₀, energy, minblock, aligner, verify, false)
+                    lock_log(plk, "task: $tid -> acquired semaphore. Traffic = $(s.curr_cnt) / $(s.sem_size)")
+
+                    G₀ = align_pair(Gₗ, Gᵣ, energy, minblock, aligner, verify, false; vbp=(tid, plk))
+                    G₀ = align_self(G₀, energy, minblock, aligner, verify, false; vbp=(tid, plk))
+                    lock_log(plk, "task: $tid -> finished merge")
+                    G₀
                 end
+                lock_log(plk, "task: $tid -> released semaphore.")
 
                 # advance progress bar in a thread-safe way
-                lock(meter_lock) do
+                lock(plk) do
                     next!(meter)
+                    println(stderr,"")
+                    flush(stderr)
                 end
 
                 if clade.parent !== nothing
                     put!(clade.parent.graph, G₀)
+                    lock_log(plk, "task: $tid -> completed!")
                 else
                     G = G₀
                     close(error_channel)
+                    lock_log(plk, "task: $tid -> completed! (final!!!)")
                 end
             end
         catch err
@@ -691,10 +743,15 @@ function align(aligner::Function, Gs::Graph...; compare=Mash.distance, energy=(h
         end
     end
 
+    lock_log(plk, "MAIN THREAD ~~~ waiting on error channel")
+
     for (err, backtrace) in error_channel
         @error "In-thread error during graph building:" exception=(err, backtrace)
         error("graph construction failed, see above for stacktrace")
     end
+
+    lock_log(plk, "MAIN THREAD ~~~ error channel closed")
+
 
     # close(events)
 

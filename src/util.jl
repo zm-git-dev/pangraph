@@ -27,6 +27,12 @@ export lock_semaphore
 # ------------------------------------------------------------------------
 # multithreading resource allocation
 
+function log(lk::ReentrantLock, msg...)
+    lock(lk) do
+        println(stderr, msg...)
+    end
+end
+
 function lock_semaphore(f::Function, s::Base.Semaphore)
     Base.acquire(s)
     try
@@ -603,10 +609,15 @@ end
 Parse a simil-PAF file produced by mmseq2 from IO stream `io`.
 Return an iterator over all pairwise alignments.
 """
-function read_mmseqs2(io::IO)
+function read_mmseqs2(io::IO; print_lock=nothing)
     int(x)   = parse(Int,x)
     float(x) = parse(Float64,x)
     last(x)  = split(x,':')[end]
+
+    if print_lock !== nothing
+        log(print_lock, "parsing paf file: (n. lines: $(countlines(io))) ->  $(io.name)")
+        seekstart(io)
+    end
 
     return [ let
         elt = split(strip(row))
